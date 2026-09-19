@@ -1,0 +1,456 @@
+.planSimpleEditor {
+  max-width: 1180px;
+  margin: 0 auto 18px;
+  padding: 0;
+  overflow: visible;
+}
+
+.planEditorTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid #eceef5;
+}
+
+.planEditorTop h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #25273d;
+}
+
+.planEditorTop span {
+  display: block;
+  margin-top: 4px;
+  color: #8b8e9f;
+  font-size: 11px;
+}
+
+.planSection {
+  padding: 18px 20px;
+  border-bottom: 1px solid #f0f1f6;
+}
+
+.planSection:last-of-type {
+  border-bottom: 0;
+}
+
+.planSectionTitle {
+  margin-bottom: 11px;
+  color: #353750;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.planSectionHeadRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.planSectionHeadRow .planSectionTitle {
+  margin-bottom: 3px;
+}
+
+.planSectionHeadRow small {
+  color: #9699a9;
+  font-size: 10px;
+}
+
+.planFields {
+  display: grid;
+  gap: 12px;
+}
+
+.planFieldsMain {
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(150px, 0.6fr);
+}
+
+.planPriceFields,
+.planAccessFields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.planFields label,
+.planLimitGrid label {
+  display: block;
+}
+
+.planFields label > span,
+.planLimitGrid label > span,
+.planInputLabel {
+  display: block;
+  margin-bottom: 6px;
+  color: #55586d;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.planFields input,
+.planFields select,
+.planLimitGrid input,
+.planRoleButton {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid #dfe2ec;
+  border-radius: 10px;
+  background: #fff;
+  color: #33364d;
+  padding: 0 11px;
+  outline: none;
+  font-size: 11px;
+  transition: border-color .16s ease, box-shadow .16s ease;
+}
+
+.planFields input:focus,
+.planFields select:focus,
+.planLimitGrid input:focus,
+.planRoleButton:focus {
+  border-color: #7779e8;
+  box-shadow: 0 0 0 3px rgba(98, 100, 237, .08);
+}
+
+.planFields input:disabled {
+  background: #f5f6f9;
+  color: #8e91a1;
+}
+
+.planFields label small {
+  display: block;
+  margin-top: 5px;
+  color: #999cab;
+  font-size: 9px;
+}
+
+.moneyInput {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #dfe2ec;
+  border-radius: 10px;
+  padding-left: 10px;
+  background: #fff;
+  color: #72758a;
+}
+
+.moneyInput:focus-within {
+  border-color: #7779e8;
+  box-shadow: 0 0 0 3px rgba(98, 100, 237, .08);
+}
+
+.moneyInput input {
+  border: 0;
+  box-shadow: none !important;
+  padding-left: 0;
+}
+
+.planRoleField {
+  position: relative;
+}
+
+.planRoleButton {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+  cursor: pointer;
+}
+
+.planRoleDropdown {
+  position: absolute;
+  z-index: 25;
+  top: calc(100% + 7px);
+  left: 0;
+  right: 0;
+  overflow: hidden;
+  border: 1px solid #e1e3ec;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 18px 45px rgba(35, 38, 70, .14);
+}
+
+.planRoleDropdownActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid #f0f1f5;
+  background: #fafbfe;
+}
+
+.planRoleDropdownActions button {
+  border: 0;
+  border-radius: 7px;
+  padding: 5px 8px;
+  background: #eef0ff;
+  color: #595bd4;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.planRoleList {
+  max-height: 280px;
+  overflow: auto;
+  padding: 6px;
+}
+
+.planRoleList > button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 9px;
+  padding: 8px;
+  background: transparent;
+  text-align: left;
+}
+
+.planRoleList > button:hover,
+.planRoleList > button.selected {
+  background: #f4f5ff;
+}
+
+.planRoleCheck,
+.planAddonCheck {
+  width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #d9dce7;
+  border-radius: 6px;
+  color: #fff;
+}
+
+.planRoleList > button.selected .planRoleCheck,
+.planAddonGrid button.active .planAddonCheck {
+  border-color: #6264dd;
+  background: #6264dd;
+}
+
+.planRoleList strong,
+.planRoleList small {
+  display: block;
+}
+
+.planRoleList strong {
+  color: #33364d;
+  font-size: 10px;
+}
+
+.planRoleList small {
+  margin-top: 2px;
+  color: #989baa;
+  font-size: 8px;
+}
+
+.planRoleEmpty {
+  padding: 16px;
+  color: #999cab;
+  text-align: center;
+  font-size: 10px;
+}
+
+.planAddonGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.planAddonGrid button {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #e1e3ec;
+  border-radius: 10px;
+  padding: 0 10px;
+  background: #fff;
+  color: #64677b;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.planAddonGrid button.active {
+  border-color: #c9cbff;
+  background: #f4f4ff;
+  color: #5557c9;
+}
+
+.planLimitGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.planLimitGrid input::placeholder {
+  color: #9295a7;
+}
+
+.planEditorActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px 20px 20px;
+}
+
+.planSimpleGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 14px;
+}
+
+.planSimpleCard {
+  border: 1px solid #e7e9f0;
+  border-radius: 16px;
+  padding: 16px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(33, 36, 72, .045);
+}
+
+.planCardTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.planCardTop h3 {
+  margin: 4px 0 0;
+  color: #292b42;
+  font-size: 15px;
+}
+
+.planCode {
+  color: #85889a;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.planPriceSummary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.planPriceSummary > div {
+  border-radius: 11px;
+  padding: 10px;
+  background: #f7f8fc;
+}
+
+.planPriceSummary small,
+.planPriceSummary strong {
+  display: block;
+}
+
+.planPriceSummary small {
+  color: #9295a6;
+  font-size: 8px;
+}
+
+.planPriceSummary strong {
+  margin-top: 3px;
+  color: #36384e;
+  font-size: 12px;
+}
+
+.planMetaRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+  color: #737689;
+  font-size: 9px;
+}
+
+.planMetaRow svg {
+  color: #6264dd;
+}
+
+.planLimitPreview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 13px;
+}
+
+.planLimitPreview span {
+  border-radius: 8px;
+  padding: 7px;
+  background: #fafbfc;
+  color: #9295a6;
+  font-size: 7px;
+}
+
+.planLimitPreview b {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #4b4e64;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planCardActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 11px;
+  border-top: 1px solid #f0f1f5;
+}
+
+.planCardActions button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: #f4f5f9;
+  color: #66697d;
+}
+
+.planCardActions button:hover {
+  background: #eceeff;
+  color: #5658d3;
+}
+
+.planCardActions button.danger:hover {
+  background: #fff0f0;
+  color: #c23838;
+}
+
+@media (max-width: 900px) {
+  .planFieldsMain,
+  .planPriceFields,
+  .planAccessFields,
+  .planLimitGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .planFieldsMain,
+  .planPriceFields,
+  .planAccessFields,
+  .planLimitGrid,
+  .planPriceSummary {
+    grid-template-columns: 1fr;
+  }
+
+  .planSection,
+  .planEditorTop,
+  .planEditorActions {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}

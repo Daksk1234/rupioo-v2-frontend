@@ -1,0 +1,316 @@
+.saPageToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 13px 15px;
+  border: 1px solid #e7e9f1;
+  border-radius: 15px;
+  background: #fff;
+}
+
+.saPageToolbar > div:first-child strong,
+.saPageToolbar > div:first-child span {
+  display: block;
+}
+
+.saPageToolbar > div:first-child strong {
+  color: #24263d;
+  font-size: 15px;
+}
+
+.saPageToolbar > div:first-child span {
+  margin-top: 3px;
+  color: #8a8da0;
+  font-size: 10px;
+}
+
+.saToolbarActions,
+.saFooterActions,
+.saStakeholderHeading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.saBtn {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 13px;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease;
+}
+
+.saBtn:hover:not(:disabled) { transform: translateY(-1px); }
+.saBtn:disabled { opacity: .5; cursor: not-allowed; }
+.saBtn.primary { background: linear-gradient(135deg, #6264ed, #8059e5); color: #fff; box-shadow: 0 8px 18px rgba(98,100,237,.16); }
+.saBtn.secondary { background: #f3f4f8; color: #55586e; border: 1px solid #e5e7ef; }
+.saBtn.large { min-height: 42px; padding: 0 18px; }
+
+.saWizard {
+  margin-bottom: 16px;
+  overflow: hidden;
+  border: 1px solid #e5e7ef;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 16px 45px rgba(34, 37, 76, .08);
+}
+
+.saWizardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 17px 19px 13px;
+  border-bottom: 1px solid #eef0f5;
+}
+
+.saWizardTop h3 { margin: 0; color: #252741; font-size: 17px; }
+.saWizardTop p { margin: 4px 0 0; color: #8a8da0; font-size: 10px; }
+
+.saIconButton {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: #f4f5f9;
+  color: #707388;
+  cursor: pointer;
+}
+.saIconButton.danger { color: #c0392b; background: #fff2f2; }
+
+.saSteps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  padding: 12px 18px;
+  background: #fafbfe;
+  border-bottom: 1px solid #eef0f5;
+}
+
+.saSteps > div {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: #a0a3b2;
+}
+
+.saSteps > div:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  width: 34%;
+  height: 1px;
+  right: -17%;
+  background: #e0e2ec;
+}
+
+.saSteps > div.active { color: #5b5dd6; }
+.saSteps > div.active:not(:last-child)::after { background: #c9caff; }
+
+.saSteps > div > span {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #eceef4;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.saSteps > div.active > span { background: #6264ed; color: #fff; }
+.saSteps small { font-size: 9px; font-weight: 800; }
+
+.saStepBody { padding: 18px; }
+.saSectionTitle { display: flex; align-items: center; gap: 7px; margin-bottom: 14px; color: #333650; font-size: 11px; font-weight: 900; }
+
+.saFormGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.saFormGrid.stakeholderGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.saFormGrid label, .saManualNote, .saBranchCount { min-width: 0; }
+.saFormGrid label > span, .saManualNote > span, .saBranchCount > span {
+  display: block;
+  margin-bottom: 6px;
+  color: #5e6176;
+  font-size: 9px;
+  font-weight: 800;
+}
+.saFormGrid input,
+.saFormGrid select,
+.saFormGrid textarea,
+.saManualNote input,
+.saBranchCount input {
+  width: 100%;
+  min-height: 39px;
+  box-sizing: border-box;
+  border: 1px solid #dfe2eb;
+  border-radius: 10px;
+  outline: none;
+  padding: 0 11px;
+  background: #fbfcfe;
+  color: #303249;
+  font-size: 10px;
+  transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+.saFormGrid textarea { min-height: 66px; padding-top: 10px; resize: vertical; }
+.saFormGrid input:focus,
+.saFormGrid select:focus,
+.saFormGrid textarea:focus,
+.saManualNote input:focus,
+.saBranchCount input:focus { border-color: #7779ea; box-shadow: 0 0 0 3px rgba(98,100,237,.08); background: #fff; }
+.saFormGrid input[readonly] { background: #f1f2f6; color: #6e7185; }
+.saFormGrid label > small, .saBranchCount small { display: block; margin-top: 5px; color: #9a9daf; font-size: 8px; line-height: 1.4; }
+.saWideField { grid-column: span 2; }
+
+.saInlineField, .saPasswordField, .saInputWithIcon { display: flex; align-items: center; gap: 7px; }
+.saInlineField input, .saPasswordField input, .saInputWithIcon input { flex: 1; min-width: 0; }
+.saInlineField button, .saPasswordField button {
+  min-height: 39px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #dadcf0;
+  border-radius: 10px;
+  padding: 0 10px;
+  background: #f0f1ff;
+  color: #5658cc;
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.saInputWithIcon { position: relative; }
+.saInputWithIcon > svg:first-child { position: absolute; left: 10px; color: #9093a6; }
+.saInputWithIcon input { padding-left: 31px; }
+
+.saGoodText { display: flex !important; align-items: center; gap: 5px; color: #15803d !important; font-weight: 700; }
+
+.saBranchBox {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid #e5e7ef;
+  border-radius: 12px;
+  background: #fafbfe;
+}
+.saCheckRow, .saSkipPayment { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.saCheckRow input, .saSkipPayment input { width: 16px; height: 16px; margin-top: 2px; }
+.saCheckRow span strong, .saCheckRow span small, .saSkipPayment span strong, .saSkipPayment span small { display: block; }
+.saCheckRow strong, .saSkipPayment strong { color: #3a3d55; font-size: 10px; }
+.saCheckRow small, .saSkipPayment small { margin-top: 3px; color: #9396a9; font-size: 8px; }
+.saBranchCount { width: 170px; }
+
+.saPlanMiniSummary,
+.saPaymentVerified {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 13px;
+  padding: 11px 13px;
+  border: 1px solid #dadcff;
+  border-radius: 11px;
+  background: #f6f6ff;
+  color: #5c5ed2;
+}
+.saPlanMiniSummary strong, .saPlanMiniSummary span,
+.saPaymentVerified strong, .saPaymentVerified span { display: block; }
+.saPlanMiniSummary strong, .saPaymentVerified strong { color: #3b3e5a; font-size: 10px; }
+.saPlanMiniSummary span, .saPaymentVerified span { margin-top: 2px; color: #85889d; font-size: 8px; }
+
+.saFooterActions { justify-content: flex-end; margin-top: 18px; padding-top: 14px; border-top: 1px solid #eef0f5; }
+.saStakeholderHeading { justify-content: space-between; }
+.saStakeholderList { display: grid; gap: 12px; }
+.saStakeholderCard { padding: 14px; border: 1px solid #e5e7ef; border-radius: 13px; background: #fbfcfe; }
+.saStakeholderCardTop { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; }
+.saStakeholderCardTop strong { color: #35384f; font-size: 10px; }
+
+.saInfoBox {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #dce2f4;
+  border-radius: 10px;
+  background: #f6f8fd;
+  color: #666a80;
+  font-size: 9px;
+}
+.saInfoBox.warning { border-color: #f1d4a1; background: #fff9ed; color: #8a5b13; }
+
+.saPaymentGrid { display: grid; grid-template-columns: 1.5fr .7fr; gap: 12px; }
+.saBillingCard, .saAmountCard { padding: 15px; border: 1px solid #e3e5ee; border-radius: 13px; background: #fbfcfe; }
+.saBillingCard > span { display: block; margin-bottom: 9px; color: #65687c; font-size: 9px; font-weight: 800; }
+.saCycleButtons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.saCycleButtons button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 47px;
+  border: 1px solid #e0e2eb;
+  border-radius: 10px;
+  padding: 0 12px;
+  background: #fff;
+  color: #63667b;
+  font-size: 9px;
+  font-weight: 800;
+}
+.saCycleButtons button strong { color: #30334d; }
+.saCycleButtons button.active { border-color: #7779ec; background: #f2f2ff; color: #5557ca; box-shadow: 0 0 0 2px rgba(98,100,237,.07); }
+.saAmountCard { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: #6264dd; }
+.saAmountCard span { margin-top: 5px; color: #8c8fa1; font-size: 8px; }
+.saAmountCard strong { margin-top: 4px; color: #292c47; font-size: 20px; }
+.saAmountCard small { margin-top: 3px; color: #9699aa; font-size: 8px; }
+
+.saSkipPayment { margin-top: 14px; padding: 12px 14px; border: 1px solid #dfe2ec; border-radius: 11px; background: #fafbfe; }
+.saManualNote { display: block; margin-top: 11px; max-width: 520px; }
+.saPaymentVerified { border-color: #bfe6ce; background: #f1fbf5; color: #198754; }
+
+.saFinalSummary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.saFinalSummary > div { padding: 10px; border-radius: 10px; background: #f6f7fa; }
+.saFinalSummary span, .saFinalSummary strong { display: block; }
+.saFinalSummary span { color: #9295a7; font-size: 8px; }
+.saFinalSummary strong { margin-top: 3px; color: #393c55; font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+
+.saCompanyCell strong, .saCompanyCell small { display: block; }
+.saCompanyCell strong { color: #34374f; font-size: 10px; }
+.saCompanyCell small { margin-top: 2px; color: #9699aa; font-size: 8px; }
+.saListPanel { overflow: hidden; }
+
+.spin { animation: saSpin .8s linear infinite; }
+@keyframes saSpin { to { transform: rotate(360deg); } }
+
+@media (max-width: 1100px) {
+  .saFormGrid, .saFormGrid.stakeholderGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .saPaymentGrid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 720px) {
+  .saPageToolbar { align-items: flex-start; flex-direction: column; }
+  .saToolbarActions { width: 100%; }
+  .saToolbarActions .saBtn { flex: 1; }
+  .saFormGrid, .saFormGrid.stakeholderGrid { grid-template-columns: 1fr; }
+  .saWideField { grid-column: auto; }
+  .saInlineField { align-items: stretch; flex-direction: column; }
+  .saBranchBox { align-items: stretch; flex-direction: column; }
+  .saBranchCount { width: 100%; }
+  .saFinalSummary { grid-template-columns: 1fr 1fr; }
+  .saSteps small { display: none; }
+}
+.saFieldLabel{display:block;font-size:10px;font-weight:700;color:#5d6074;margin-bottom:6px}.saYearPicker{display:flex;flex-wrap:wrap;gap:7px}.saYearChip{display:flex!important;align-items:center;gap:5px;padding:7px 9px!important;border:1px solid #dfe2ec;border-radius:9px;background:#fff;cursor:pointer;font-size:9px!important;font-weight:700!important}.saYearChip.active{border-color:#7476e8;background:#f1f2ff;color:#5658d5}.saYearChip input{width:auto!important;height:auto!important;margin:0}.saYearAdd{margin-top:8px;max-width:360px}.saYearDefaults{display:flex;align-items:center;gap:8px;margin-top:8px}.saYearDefaults select{width:auto;min-width:110px;padding:6px 8px;border:1px solid #dfe2ec;border-radius:8px;background:#fff;font-size:9px}
+
+/* MASTER Superadmin list enhancements */
+.saCompanyLink{width:100%;border:0;background:transparent;padding:0;text-align:left;cursor:pointer}.saCompanyLink:hover strong{color:#5658d5;text-decoration:underline}.saDaysBadge{display:inline-grid;min-width:34px;height:25px;padding:0 8px;place-items:center;border-radius:999px;background:#eef0f5;color:#626578;font-size:9px;font-weight:800}.saDaysBadge.active{background:#eaf8ef;color:#1f7b49}.saDaysBadge.expiring{background:#fff4d9;color:#a86400}.saDaysBadge.expired,.saDaysBadge.suspended,.saDaysBadge.deleted{background:#ffeded;color:#b52d2d}.saListStatus{display:inline-block;padding:5px 8px;border-radius:999px;background:#eef0f5;color:#66697b;font-size:8px;font-weight:800}.saListStatus.active{background:#eaf8ef;color:#1f7b49}.saListStatus.expiring{background:#fff4d9;color:#a86400}.saListStatus.expired,.saListStatus.suspended,.saListStatus.deleted{background:#ffeded;color:#b52d2d}

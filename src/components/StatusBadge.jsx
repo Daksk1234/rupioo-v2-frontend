@@ -1,0 +1,2 @@
+import React from "react";
+export default function StatusBadge({value="ACTIVE"}){const v=String(value).toUpperCase();const cls=v.includes("GREEN")||v.includes("ACTIVE")||v.includes("APPROVED")||v.includes("GOOD")?"green":v.includes("BLUE")||v.includes("NORMAL")?"blue":v.includes("RED")||v.includes("BLOCK")||v.includes("HIGH")?"red":v.includes("ORANGE")?"orange":"yellow";return <span className={`status ${cls}`}>{value}</span>}
