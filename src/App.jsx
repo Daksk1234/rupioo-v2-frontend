@@ -4,6 +4,7 @@ import LoginPage from "./pages/LoginPage.jsx";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage.jsx";
 import ResetPasswordPage from "./pages/ResetPasswordPage.jsx";
 import RegisterSuperadminPage from "./pages/RegisterSuperadminPage.jsx";
+import VendorPortalPage from "./pages/VendorPortalPage.jsx";
 import AppShell from "./components/AppShell.jsx";
 import ModulePage from "./pages/ModulePage.jsx";
 import NoAccessPage from "./pages/NoAccessPage.jsx";
@@ -11,6 +12,18 @@ import SuperadminProfilePage from "./pages/SuperadminProfilePage.jsx";
 import StorageSettings from "./pages/StorageSettings.jsx";
 import { allPages } from "./config/modules.js";
 import { getUser, token } from "./lib/api.js";
+
+
+const SALES_WITH_PRODUCT_PATH = "/dms/list-of-sales-with-product";
+const SALES_INVOICE_PATH = "/dms/sales-invoices";
+
+function canViewPage(user, path) {
+  if (user?.pageAccess?.[path]?.view === true) return true;
+  if (path === SALES_WITH_PRODUCT_PATH) {
+    return user?.pageAccess?.[SALES_INVOICE_PATH]?.view === true;
+  }
+  return false;
+}
 
 function homePath() {
   const user = getUser();
@@ -33,9 +46,10 @@ function Protected({ page }) {
     return <Navigate to={homePath()} replace />;
   }
 
-  // Every operational route is protected by the View permission inherited
+
+  // Every other operational route is protected by the View permission inherited
   // from the Group attached to the selected Plan. Direct URL entry is blocked.
-  if (user?.role !== "MASTER" && !user?.pageAccess?.[page.path]?.view) {
+  if (user?.role !== "MASTER" && !canViewPage(user, page.path)) {
     return <Navigate to={homePath()} replace />;
   }
 
@@ -86,6 +100,7 @@ export default function App() {
       <Route path="/register" element={<RegisterSuperadminPage />} />
       <Route path="/forgot-password" element={<ForgotPasswordPage />} />
       <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/vendor/portal/:token" element={<VendorPortalPage />} />
       <Route path="/no-access" element={token() ? <NoAccessPage /> : <Navigate to="/login" replace />} />
       <Route path="/profile" element={<SuperadminProfileProtected />} />
       <Route path="/storage-settings" element={<StorageSettingsProtected />} />

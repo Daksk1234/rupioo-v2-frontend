@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, Plus, RefreshCw, ScanLine, Trash2, Upload, X } from "lucide-react";
 import { api } from "../lib/api.js";
 import { fetchTransactionParties, partyGstin, partyOptionLabel } from "../lib/partyDirectory.js";
+import { financialYearFromDate } from "../lib/financialYear.js";
 
 const round2 = (n) => Number((Number(n) || 0).toFixed(2));
 const clean = (v) => String(v ?? "").trim();
@@ -10,12 +11,7 @@ const ymd = (v) => {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? clean(v).slice(0, 10) : d.toISOString().slice(0, 10);
 };
-const fyForDate = (value) => {
-  const d = value ? new Date(value) : new Date();
-  const safe = Number.isNaN(d.getTime()) ? new Date() : d;
-  const y = safe.getMonth() >= 3 ? safe.getFullYear() : safe.getFullYear() - 1;
-  return `${y}-${String((y + 1) % 100).padStart(2, "0")}`;
-};
+const fyForDate = (value) => financialYearFromDate(value);
 const emptyItem = () => ({ productId: "", name: "", hsnCode: "", qty: 1, unit: "", rate: 0, gstRate: 0, discountPct: 0, productMatches: [] });
 
 async function fetchAllPaged(path, limit = 200) {

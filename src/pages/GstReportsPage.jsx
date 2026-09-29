@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Download, Printer, RefreshCw, Search } from "lucide-react";
-import { api, apiBlob } from "../lib/api.js";
+import { api, apiBlob, getUser } from "../lib/api.js";
+import { configuredFinancialYear, financialYearOptions } from "../lib/financialYear.js";
 
 const REPORTS = [
   ["GSTR1", "GSTR 1"],
@@ -15,7 +16,6 @@ const money = (v) => Number(v || 0).toLocaleString("en-IN", { minimumFractionDig
 const text = (v) => v == null || v === "" ? "-" : String(v);
 const escCsv = (v) => `"${String(v ?? "").replaceAll('"','""')}"`;
 
-function fyDefault(){const d=new Date(),y=d.getFullYear(),m=d.getMonth()+1;const s=m>=4?y:y-1;return `${s}-${String((s+1)%100).padStart(2,"0")}`;}
 function fyStart(fy){return Number(String(fy).split("-")[0])||new Date().getFullYear();}
 function pad(n){return String(n).padStart(2,"0");}
 function periodRange(fy,type,month,quarter,half,customStart,customEnd){
@@ -54,8 +54,10 @@ function Section({title,rows,cols,onInvoice,downloadCsv}){return <section classN
 function StatGrid({items}){return <div className="gst-stat-grid">{items.map(([k,v])=><div className="gst-stat" key={k}><span>{k}</span><strong>{money(v)}</strong></div>)}</div>}
 
 export default function GstReportsPage({initialReport="GSTR1"}){
+ const user=getUser();
  const [active,setActive]=useState(initialReport);
- const [fy,setFy]=useState(fyDefault());
+ const [fy,setFy]=useState(configuredFinancialYear(user));
+ const fyYears=financialYearOptions(user,{count:8,extra:[fy]});
  const [periodType,setPeriodType]=useState("FY"),[month,setMonth]=useState(4),[quarter,setQuarter]=useState(1),[half,setHalf]=useState(1),[customStart,setCustomStart]=useState(""),[customEnd,setCustomEnd]=useState("");
  const [data,setData]=useState(null),[loading,setLoading]=useState(false),[error,setError]=useState("");
  const [g1Tab,setG1Tab]=useState("B2"),[ioMode,setIoMode]=useState("ALL");
@@ -74,7 +76,7 @@ export default function GstReportsPage({initialReport="GSTR1"}){
  `}</style>
  <div className="gst-old-tabs">{REPORTS.map(([id,label])=><button key={id} className={`gst-old-tab ${active===id?'active':''}`} onClick={()=>setActive(id)}>{label}</button>)}</div>
  <div className="gst-old-toolbar">
-  <div className="gst-field"><label>Financial Year</label><select value={fy} onChange={e=>setFy(e.target.value)}>{[0,1,2,3,4].map(n=>{const y=fyStart(fyDefault())-n;return <option key={y} value={`${y}-${String((y+1)%100).padStart(2,'0')}`}>{y}-{String((y+1)%100).padStart(2,'0')}</option>})}</select></div>
+  <div className="gst-field"><label>Financial Year</label><select value={fy} onChange={e=>setFy(e.target.value)}>{fyYears.map(year=><option key={year} value={year}>{year}</option>)}</select></div>
   <div className="gst-field"><label>Filter Type</label><select value={periodType} onChange={e=>setPeriodType(e.target.value)}><option value="FY">Full FY</option><option value="MONTH">Month</option><option value="QUARTER">Quarter</option><option value="HALF">Half Year</option><option value="CUSTOM">Custom Date</option></select></div>
   {periodType==='MONTH'&&<div className="gst-field"><label>Month</label><select value={month} onChange={e=>setMonth(Number(e.target.value))}>{MONTHS.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></div>}
   {periodType==='QUARTER'&&<div className="gst-field"><label>Quarter</label><select value={quarter} onChange={e=>setQuarter(Number(e.target.value))}>{[1,2,3,4].map(x=><option key={x} value={x}>Q{x}</option>)}</select></div>}

@@ -8,7 +8,6 @@ import {
   Clock3,
   CreditCard,
   History,
-  KeyRound,
   Loader2,
   Mail,
   MapPin,
@@ -23,6 +22,9 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../lib/api.js";
+import { saveWithGstTenantDecision } from "../lib/gstTenantMigration.js";
+import { useGstTenantMigrationDialog } from "./GstTenantMigrationDialog.jsx";
+import { bankDetailsFromIfsc, cleanGstin, fetchGstCompany, fetchIfscCompany, fetchPincodeCompany, gstCompanyFields, pincodeCompanyFields } from "../lib/companyLookup.js";
 import "../superadmin-details.css";
 
 const money = (value) =>
@@ -84,6 +86,9 @@ export default function SuperadminDetailsPanel({
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
   const [working, setWorking] = useState(false);
+  const [gstLoading, setGstLoading] = useState(false);
+  const [pinLoading, setPinLoading] = useState(false);
+  const [ifscLoading, setIfscLoading] = useState(false);
   const [tab, setTab] = useState("overview");
   const [editing, setEditing] = useState(false);
   const [renewing, setRenewing] = useState(false);
@@ -94,6 +99,7 @@ export default function SuperadminDetailsPanel({
     periods: 1,
     paymentNote: "",
   });
+  const { askGstTenantMigration, gstTenantMigrationDialog } = useGstTenantMigrationDialog();
 
   const load = async () => {
     if (!superadminId) return;
@@ -103,14 +109,23 @@ export default function SuperadminDetailsPanel({
       setDetail(result);
       const profile = result.companyProfile || {};
       setEditForm({
+        gstin: profile.gstin || result.user?.tenantKey || "",
         companyName: profile.companyName || "",
         tradeName: profile.tradeName || "",
         mobile: profile.mobile || "",
         email: profile.email || result.user?.email || "",
         registeredAddress: profile.registeredAddress || "",
         pincode: profile.pincode || "",
+        area: profile.area || "",
         city: profile.city || "",
+        district: profile.district || "",
         state: profile.state || "",
+        bankDetails: profile.bankDetails || {},
+        gstVerified: Boolean(profile.gstVerification?.verified),
+        gstSource: profile.gstVerification?.source || "",
+        gstStatus: profile.gstVerification?.status || "",
+        gstTaxpayerType: profile.gstVerification?.taxpayerType || "",
+        gstConstitution: profile.gstVerification?.constitution || "",
         financialYear: profile.financialYear || "",
         financialYears: (profile.financialYears || []).join(", "),
         hasMultipleBranches: Boolean(profile.hasMultipleBranches),
@@ -160,19 +175,84 @@ export default function SuperadminDetailsPanel({
   const isDeleted = String(profile.status || "").toUpperCase() === "DELETED";
   const isSuspended = String(profile.status || "").toUpperCase() === "SUSPENDED";
 
+  const lookupGst = async (value) => {
+    const gstin = String(value || "").toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0,15);
+    if (gstin.length !== 15) return;
+    setGstLoading(true);
+    try {
+      const taxpayer = await fetchGstCompany(gstin);
+      const raw = taxpayer?.principalAddressRaw || {};
+      const pin = String(raw.pncd || raw.pincode || "").replace(/\D/g, "").slice(0,6);
+      setEditForm((current) => ({ ...gstCompanyFields(taxpayer, current), gstin }));
+      if (pin.length === 6) await lookupPincode(pin);
+    } catch (error) { notify?.(error.message, "bad"); } finally { setGstLoading(false); }
+  };
+
+  const changeGstin = (raw) => {
+    const gstin = String(raw || "").toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0,15);
+    setEditForm((current) => ({ ...current, gstin, gstVerified:false }));
+    if (gstin.length === 15) lookupGst(gstin);
+  };
+
+  const lookupPincode = async (value) => {
+    const pincode = String(value || "").replace(/\D/g, "").slice(0,6);
+    if (pincode.length !== 6) return;
+    setPinLoading(true);
+    try {
+      const row = await fetchPincodeCompany(pincode);
+      setEditForm((current) => pincodeCompanyFields(row, current));
+    } catch (error) { notify?.(error.message, "bad"); } finally { setPinLoading(false); }
+  };
+
+  const changePincode = (raw) => {
+    const pincode = String(raw || "").replace(/\D/g, "").slice(0,6);
+    setEditForm((current) => ({ ...current, pincode }));
+    if (pincode.length === 6) lookupPincode(pincode);
+  };
+
+  const lookupIfsc = async (value) => {
+    const ifsc = String(value || "").toUpperCase().replace(/\s+/g, "").slice(0,11);
+    if (ifsc.length !== 11) return;
+    setIfscLoading(true);
+    try {
+      const row = await fetchIfscCompany(ifsc);
+      setEditForm((current) => ({ ...current, bankDetails:bankDetailsFromIfsc(row, current.bankDetails||{}) }));
+    } catch (error) { notify?.(error.message, "bad"); } finally { setIfscLoading(false); }
+  };
+
+  const changeIfsc = (raw) => {
+    const ifsc = String(raw || "").toUpperCase().replace(/\s+/g, "").slice(0,11);
+    setEditForm((current) => ({ ...current, bankDetails:{ ...(current.bankDetails||{}), ifsc } }));
+    if (ifsc.length === 11) lookupIfsc(ifsc);
+  };
+
   const saveEdit = async () => {
     setWorking(true);
     try {
-      await api(`/access/superadmins/${superadminId}`, {
+      const payload = {
+        ...editForm,
+        financialYears: cleanYears(editForm.financialYears),
+        branchCount: Number(editForm.branchCount || 1),
+        graceDays: Number(editForm.graceDays || 0),
+      };
+      const saved = await saveWithGstTenantDecision({
+        path: `/access/superadmins/${superadminId}`,
         method: "PUT",
-        body: JSON.stringify({
-          ...editForm,
-          financialYears: cleanYears(editForm.financialYears),
-          branchCount: Number(editForm.branchCount || 1),
-          graceDays: Number(editForm.graceDays || 0),
-        }),
+        payload,
+        askDecision: askGstTenantMigration,
+        currentGstin: profile.gstin || user.tenantKey || "",
+        currentTenantKey: profile.tenantKey || user.tenantKey || "",
       });
-      notify?.("Superadmin company details updated");
+      if (saved.cancelled) return;
+      notify?.(
+        saved.data?.tenantKeyChanged
+          ? `GSTIN updated. All company data was moved to tenant ${saved.data.newTenantKey || editForm.gstin}.`
+          : saved.data?.tenantIdentityRepaired
+            ? `Superadmin tenant identity repaired. Active tenantKey: ${saved.data?.companyProfile?.tenantKey || saved.data?.user?.tenantKey || "updated tenant"}.`
+            : saved.migrateTenantData === false
+              ? "GSTIN updated. Existing tenantKey and data location were kept unchanged."
+              : "Superadmin company details updated",
+      );
       setEditing(false);
       await load();
       await onChanged?.();
@@ -221,22 +301,7 @@ export default function SuperadminDetailsPanel({
     }
   };
 
-  const resetPassword = async () => {
-    const password = window.prompt("Enter a new password (minimum 8 characters)");
-    if (!password) return;
-    setWorking(true);
-    try {
-      await api(`/access/users/${superadminId}/reset-password`, {
-        method: "POST",
-        body: JSON.stringify({ password }),
-      });
-      notify?.("Password reset successfully");
-    } catch (error) {
-      notify?.(error.message, "bad");
-    } finally {
-      setWorking(false);
-    }
-  };
+
 
   const removeCompany = async () => {
     const confirmation = window.prompt(
@@ -275,7 +340,8 @@ export default function SuperadminDetailsPanel({
   };
 
   return (
-    <div className="saDetailBackdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
+    <>
+      <div className="saDetailBackdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose?.()}>
       <aside className="saDetailPanel">
         <div className="saDetailHeader">
           <div className="saDetailIdentity">
@@ -301,7 +367,6 @@ export default function SuperadminDetailsPanel({
             <div className="saDetailQuickActions">
               {!isDeleted && <button className="primary" type="button" onClick={() => setEditing(true)}><Pencil size={15} /> Edit</button>}
               {!isDeleted && <button type="button" onClick={() => setRenewing(true)}><CalendarClock size={15} /> Renew / Change Plan</button>}
-              {!isDeleted && <button type="button" onClick={resetPassword}><KeyRound size={15} /> Reset Password</button>}
               {!isDeleted && (isSuspended
                 ? <button type="button" onClick={() => setCompanyStatus("ACTIVE")}><CheckCircle2 size={15} /> Activate</button>
                 : <button type="button" onClick={() => setCompanyStatus("SUSPENDED")}><Ban size={15} /> Suspend</button>)}
@@ -465,16 +530,39 @@ export default function SuperadminDetailsPanel({
         {editing && (
           <div className="saDetailModalLayer">
             <div className="saDetailModal">
-              <div className="saModalHeader"><div><Pencil size={17} /><span><strong>Edit Company</strong><small>GSTIN, PAN and legal constitution stay protected.</small></span></div><button type="button" onClick={() => setEditing(false)}><X size={17} /></button></div>
+              <div className="saModalHeader"><div><Pencil size={17} /><span><strong>Edit Company</strong><small>GSTIN changes use protected tenant-migration confirmation; PAN and legal constitution validations remain protected.</small></span></div><button type="button" onClick={() => setEditing(false)}><X size={17} /></button></div>
               <div className="saModalGrid">
+                {detail?.tenantIdentityMismatch && (
+                  <div className="wide" style={{padding:"10px 12px",borderRadius:10,border:"1px solid rgba(220,38,38,.38)",background:"rgba(220,38,38,.07)",fontSize:13,lineHeight:1.45}}>
+                    <strong>Tenant identity mismatch found:</strong> Superadmin tenantKey is {user.tenantKey || "—"}, while CompanyProfile tenantKey is {profile.tenantKey || "—"}. Save Changes will automatically repair this split identity; if the GSTIN differs from the CompanyProfile tenantKey, the data-migration dialog will also appear.
+                  </div>
+                )}
+                <label className="wide"><span>GSTIN</span><div className="saInputWithIcon"><input value={editForm.gstin || ""} onChange={(e)=>changeGstin(e.target.value)} maxLength={15}/>{gstLoading&&<Loader2 className="spin" size={14}/>}</div><small>Current tenantKey: <strong>{profile.tenantKey || user.tenantKey || "—"}</strong>. Enter all 15 GSTIN characters to re-fetch details. If GSTIN and tenantKey differ, Save Changes will ask whether to migrate all data.</small></label>
+                {cleanGstin(editForm.gstin) && cleanGstin(editForm.gstin) !== cleanGstin(profile.tenantKey || user.tenantKey) && (
+                  <div className="wide" style={{padding:"10px 12px",borderRadius:10,border:"1px solid rgba(245,158,11,.45)",background:"rgba(245,158,11,.08)",fontSize:13,lineHeight:1.45}}>
+                    <strong>GST / tenant mismatch detected:</strong> Current tenantKey is {profile.tenantKey || user.tenantKey || "—"}; requested GSTIN is {cleanGstin(editForm.gstin)}. Saving will ask whether to migrate all company data to the GST-based tenantKey.
+                  </div>
+                )}
                 <label><span>Company Name</span><input value={editForm.companyName || ""} onChange={(e) => setEditForm({ ...editForm, companyName: e.target.value })} /></label>
                 <label><span>Trade Name</span><input value={editForm.tradeName || ""} onChange={(e) => setEditForm({ ...editForm, tradeName: e.target.value })} /></label>
                 <label><span>Email</span><input type="email" value={editForm.email || ""} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} /></label>
                 <label><span>Mobile</span><input value={editForm.mobile || ""} onChange={(e) => setEditForm({ ...editForm, mobile: e.target.value })} /></label>
                 <label className="wide"><span>Registered Address</span><input value={editForm.registeredAddress || ""} onChange={(e) => setEditForm({ ...editForm, registeredAddress: e.target.value })} /></label>
-                <label><span>Pincode</span><input value={editForm.pincode || ""} onChange={(e) => setEditForm({ ...editForm, pincode: e.target.value })} /></label>
-                <label><span>City</span><input value={editForm.city || ""} onChange={(e) => setEditForm({ ...editForm, city: e.target.value })} /></label>
-                <label><span>State</span><input value={editForm.state || ""} onChange={(e) => setEditForm({ ...editForm, state: e.target.value })} /></label>
+                <label><span>Pincode</span><div className="saInputWithIcon"><input value={editForm.pincode || ""} onChange={(e)=>changePincode(e.target.value)} maxLength={6}/>{pinLoading&&<Loader2 className="spin" size={14}/>}</div></label>
+                <label><span>Area</span><input value={editForm.area || ""} onChange={(e)=>setEditForm({ ...editForm, area:e.target.value })}/></label>
+                <label><span>City</span><input value={editForm.city || ""} onChange={(e)=>setEditForm({ ...editForm, city:e.target.value })}/></label>
+                <label><span>District</span><input value={editForm.district || ""} onChange={(e)=>setEditForm({ ...editForm, district:e.target.value })}/></label>
+                <label><span>State</span><input value={editForm.state || ""} onChange={(e)=>setEditForm({ ...editForm, state:e.target.value })}/></label>
+                <label><span>IFSC</span><div className="saInputWithIcon"><input value={editForm.bankDetails?.ifsc||""} onChange={(e)=>changeIfsc(e.target.value)} maxLength={11}/>{ifscLoading&&<Loader2 className="spin" size={14}/>}</div></label>
+                <label><span>Bank</span><input value={editForm.bankDetails?.bankName||""} readOnly/></label>
+                <label><span>Branch</span><input value={editForm.bankDetails?.branchName||""} readOnly/></label>
+                <label><span>Bank City</span><input value={editForm.bankDetails?.city||""} readOnly/></label>
+                <label><span>Bank State</span><input value={editForm.bankDetails?.state||""} readOnly/></label>
+                <label><span>Branch Area</span><input value={editForm.bankDetails?.branchArea||""} readOnly/></label>
+                <label><span>STD Code</span><input value={editForm.bankDetails?.stdCode||""} readOnly/></label>
+                <label><span>Phone</span><input value={editForm.bankDetails?.phone||""} readOnly/></label>
+                <label><span>Contact</span><input value={editForm.bankDetails?.contactNo||""} readOnly/></label>
+                <label className="wide"><span>Bank Address</span><input value={editForm.bankDetails?.bankAddress||""} readOnly/></label>
                 <label><span>Default FY</span><input value={editForm.financialYear || ""} onChange={(e) => setEditForm({ ...editForm, financialYear: e.target.value })} placeholder="2026-27" /></label>
                 <label className="wide"><span>Financial Years</span><input value={editForm.financialYears || ""} onChange={(e) => setEditForm({ ...editForm, financialYears: e.target.value })} placeholder="2025-26, 2026-27" /></label>
                 <label><span>No. of Branches</span><input type="number" min="1" value={editForm.branchCount || 1} onChange={(e) => setEditForm({ ...editForm, branchCount: e.target.value, hasMultipleBranches: Number(e.target.value) > 1 })} /></label>
@@ -502,6 +590,8 @@ export default function SuperadminDetailsPanel({
           </div>
         )}
       </aside>
-    </div>
+      </div>
+      {gstTenantMigrationDialog}
+    </>
   );
 }

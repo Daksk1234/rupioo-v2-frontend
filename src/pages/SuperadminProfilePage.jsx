@@ -18,6 +18,9 @@ import {
   X,
 } from "lucide-react";
 import { api, apiBlob, getUser, updateSessionUser } from "../lib/api.js";
+import { saveWithGstTenantDecision } from "../lib/gstTenantMigration.js";
+import { useGstTenantMigrationDialog } from "../components/GstTenantMigrationDialog.jsx";
+import { bankDetailsFromIfsc, fetchGstCompany, fetchIfscCompany, fetchPincodeCompany, gstCompanyFields, pincodeCompanyFields } from "../lib/companyLookup.js";
 import "../profile-bank.css";
 
 const emptyPassword = { currentPassword: "", newPassword: "", confirmPassword: "" };
@@ -44,6 +47,10 @@ export default function SuperadminProfilePage() {
   const [logoPreview, setLogoPreview] = useState("");
   const [signaturePreview, setSignaturePreview] = useState("");
   const [assetBusy, setAssetBusy] = useState("");
+  const [gstLoading, setGstLoading] = useState(false);
+  const [pinLoading, setPinLoading] = useState(false);
+  const [ifscLoading, setIfscLoading] = useState(false);
+  const { askGstTenantMigration, gstTenantMigrationDialog } = useGstTenantMigrationDialog();
 
   const load = async () => {
     setLoading(true);
@@ -54,6 +61,7 @@ export default function SuperadminProfilePage() {
       const company = result.company || {};
       const user = result.user || {};
       setForm({
+        gstin: company.gstin || user.tenantKey || "",
         name: user.name || "",
         email: user.email || "",
         mobile: user.mobile || company.mobile || "",
@@ -61,8 +69,16 @@ export default function SuperadminProfilePage() {
         tradeName: company.tradeName || "",
         registeredAddress: company.registeredAddress || "",
         pincode: company.pincode || "",
+        area: company.area || "",
         city: company.city || "",
+        district: company.district || "",
         state: company.state || "",
+        bankDetails: company.bankDetails || {},
+        gstVerified: Boolean(company.gstVerification?.verified),
+        gstSource: company.gstVerification?.source || "",
+        gstStatus: company.gstVerification?.status || "",
+        gstTaxpayerType: company.gstVerification?.taxpayerType || "",
+        gstConstitution: company.gstVerification?.constitution || "",
         financialYear: company.financialYear || "",
         financialYears: Array.isArray(company.financialYears) ? company.financialYears : [],
         salesInvoicePrefix: company.salesInvoicePrefix || "",
@@ -126,22 +142,87 @@ export default function SuperadminProfilePage() {
     return "good";
   }, [subscription.status, company.subscriptionStatus]);
 
+  const lookupGst = async (value) => {
+    const gstin = String(value || "").toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0,15);
+    if (gstin.length !== 15) return;
+    setGstLoading(true);
+    setError("");
+    try {
+      const taxpayer = await fetchGstCompany(gstin);
+      const raw = taxpayer?.principalAddressRaw || {};
+      const pin = String(raw.pncd || raw.pincode || "").replace(/\D/g, "").slice(0,6);
+      setForm((current) => ({ ...gstCompanyFields(taxpayer, current), gstin }));
+      if (pin.length === 6) await lookupPincode(pin);
+    } catch (e) { setError(e.message); } finally { setGstLoading(false); }
+  };
+
+  const changeGstin = (raw) => {
+    const gstin = String(raw || "").toUpperCase().replace(/[^0-9A-Z]/g, "").slice(0,15);
+    setForm((current) => ({ ...current, gstin, gstVerified:false }));
+    if (gstin.length === 15) lookupGst(gstin);
+  };
+
+  const lookupPincode = async (value) => {
+    const pincode = String(value || "").replace(/\D/g, "").slice(0,6);
+    if (pincode.length !== 6) return;
+    setPinLoading(true);
+    try {
+      const row = await fetchPincodeCompany(pincode);
+      setForm((current) => pincodeCompanyFields(row, current));
+    } catch (e) { setError(e.message); } finally { setPinLoading(false); }
+  };
+
+  const changePincode = (raw) => {
+    const pincode = String(raw || "").replace(/\D/g, "").slice(0,6);
+    setForm((current) => ({ ...current, pincode }));
+    if (pincode.length === 6) lookupPincode(pincode);
+  };
+
+  const lookupIfsc = async (value) => {
+    const ifsc = String(value || "").toUpperCase().replace(/\s+/g, "").slice(0,11);
+    if (ifsc.length !== 11) return;
+    setIfscLoading(true);
+    try {
+      const row = await fetchIfscCompany(ifsc);
+      setForm((current) => ({ ...current, bankDetails:bankDetailsFromIfsc(row, current.bankDetails||{}) }));
+    } catch (e) { setError(e.message); } finally { setIfscLoading(false); }
+  };
+
+  const changeIfsc = (raw) => {
+    const ifsc = String(raw || "").toUpperCase().replace(/\s+/g, "").slice(0,11);
+    setForm((current) => ({ ...current, bankDetails:{ ...(current.bankDetails||{}), ifsc } }));
+    if (ifsc.length === 11) lookupIfsc(ifsc);
+  };
+
   const saveProfile = async () => {
     setMessage("");
     setError("");
     try {
-      const result = await api("/profile", {
+      const saved = await saveWithGstTenantDecision({
+        path: "/profile",
         method: "PUT",
-        body: JSON.stringify(form),
+        payload: form,
+        askDecision: askGstTenantMigration,
+        currentGstin: company.gstin || user.tenantKey || "",
+        currentTenantKey: company.tenantKey || user.tenantKey || "",
       });
+      if (saved.cancelled) return;
+      const result = saved.data;
       setData(result);
       updateSessionUser({
         ...result.user,
+        tenantKey: result.newTenantKey || result.user?.tenantKey || result.company?.tenantKey,
         companyProfile: result.company,
         plan: result.plan,
       });
       setEditing(false);
-      setMessage("Profile updated successfully");
+      setMessage(
+        result.tenantKeyChanged
+          ? `GSTIN updated and all company data moved to tenant ${result.newTenantKey}.`
+          : saved.migrateTenantData === false
+            ? "GSTIN updated. Existing tenantKey and data location were kept unchanged."
+            : "Profile updated successfully",
+      );
     } catch (e) {
       setError(e.message);
     }
@@ -431,14 +512,27 @@ export default function SuperadminProfilePage() {
           <section className="panel modalPanel wideModal profileModal">
             <div className="formTitle"><div><h3>Edit Superadmin Profile</h3><span>GSTIN, PAN and legal constitution remain protected.</span></div><button className="iconBtn" onClick={() => setEditing(false)}><X/></button></div>
             <div className="formGrid compactGrid">
+              <label>GSTIN<div className="lookupSelectRow"><input value={form.gstin || ""} onChange={e=>changeGstin(e.target.value)} maxLength={15}/>{gstLoading&&<span>Fetching…</span>}</div><small>GST details auto-fetch at 15 characters. If GSTIN changes, you will choose whether all company data should move to the new GST tenantKey.</small></label>
               <label>Name<input value={form.name || ""} onChange={e => setForm({...form,name:e.target.value})}/></label>
               <label>Email<input type="email" value={form.email || ""} onChange={e => setForm({...form,email:e.target.value})}/></label>
               <label>Mobile<input value={form.mobile || ""} onChange={e => setForm({...form,mobile:e.target.value})}/></label>
               <label>Company Name<input value={form.companyName || ""} onChange={e => setForm({...form,companyName:e.target.value})}/></label>
               <label>Trade Name<input value={form.tradeName || ""} onChange={e => setForm({...form,tradeName:e.target.value})}/></label>
-              <label>Pincode<input value={form.pincode || ""} onChange={e => setForm({...form,pincode:e.target.value})}/></label>
-              <label>City<input value={form.city || ""} onChange={e => setForm({...form,city:e.target.value})}/></label>
-              <label>State<input value={form.state || ""} onChange={e => setForm({...form,state:e.target.value})}/></label>
+              <label>Pincode<div className="lookupSelectRow"><input value={form.pincode || ""} onChange={e=>changePincode(e.target.value)} maxLength={6}/>{pinLoading&&<span>Fetching…</span>}</div></label>
+              <label>Area<input value={form.area || ""} onChange={e=>setForm({...form,area:e.target.value})}/></label>
+              <label>City<input value={form.city || ""} onChange={e=>setForm({...form,city:e.target.value})}/></label>
+              <label>District<input value={form.district || ""} onChange={e=>setForm({...form,district:e.target.value})}/></label>
+              <label>State<input value={form.state || ""} onChange={e=>setForm({...form,state:e.target.value})}/></label>
+              <label>IFSC<div className="lookupSelectRow"><input value={form.bankDetails?.ifsc||""} onChange={e=>changeIfsc(e.target.value)} maxLength={11}/>{ifscLoading&&<span>Fetching…</span>}</div></label>
+              <label>Bank<input value={form.bankDetails?.bankName||""} readOnly/></label>
+              <label>Branch<input value={form.bankDetails?.branchName||""} readOnly/></label>
+              <label>Bank City<input value={form.bankDetails?.city||""} readOnly/></label>
+              <label>Bank State<input value={form.bankDetails?.state||""} readOnly/></label>
+              <label>Branch Area<input value={form.bankDetails?.branchArea||""} readOnly/></label>
+              <label>STD Code<input value={form.bankDetails?.stdCode||""} readOnly/></label>
+              <label>Phone<input value={form.bankDetails?.phone||""} readOnly/></label>
+              <label>Contact<input value={form.bankDetails?.contactNo||""} readOnly/></label>
+              <label className="wideField">Bank Address<input value={form.bankDetails?.bankAddress||""} readOnly/></label>
               <label>Sales Invoice Prefix<input value={form.salesInvoicePrefix || ""} onChange={e => setForm({...form,salesInvoicePrefix:e.target.value})} placeholder="e.g. EKO"/></label>
               <label>Sales Invoice Starting Number<input type="number" min="1" value={form.salesInvoiceStartingNumber || 1} onChange={e => setForm({...form,salesInvoiceStartingNumber:Number(e.target.value)})}/></label>
               <label>Sales Invoice Suffix<input value={form.salesInvoiceSuffix || ""} onChange={e => setForm({...form,salesInvoiceSuffix:e.target.value})} placeholder="e.g. 26-27"/></label>
@@ -470,6 +564,7 @@ export default function SuperadminProfilePage() {
           </section>
         </div>
       )}
+      {gstTenantMigrationDialog}
     </>
   );
 }

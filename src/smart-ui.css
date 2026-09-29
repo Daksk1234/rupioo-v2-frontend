@@ -1902,3 +1902,121 @@ input, select, textarea, button { max-width: 100%; }
 /* 2026-09-16 — Bulk Sales/Purchase Invoice Scan & Fill */
 .bulkInvoiceScanTrigger{white-space:nowrap;min-height:34px}.bulkInvoiceScanModal{width:min(1380px,calc(100vw - 18px));max-height:94vh;overflow:auto}.bulkInvoiceScanTopbar{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin:10px 0 12px}.bulkInvoiceScanTopbar>label:not(.bulkInvoiceFilePicker){display:grid;gap:4px;min-width:220px}.bulkInvoiceScanTopbar>label>span{font-size:10px;font-weight:800;color:var(--muted)}.bulkInvoiceFilePicker{display:inline-flex;align-items:center;gap:7px;padding:8px 12px;border:1px dashed var(--line);border-radius:10px;background:var(--surface);cursor:pointer;font-size:11px;font-weight:800}.bulkInvoiceSummary{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.bulkInvoiceSummary span,.bulkInvoiceSummary b,.bulkInvoiceSummary strong,.bulkInvoiceSummary em{padding:5px 9px;border-radius:999px;background:var(--surface-2,#f5f6f9);font-size:10px;font-style:normal}.bulkInvoiceSummary b{color:#166534}.bulkInvoiceSummary strong{color:#2563eb}.bulkInvoiceSummary em{color:#b45309}.bulkInvoiceCards{display:grid;gap:9px}.bulkInvoiceCard{border:1px solid var(--line);border-left-width:4px;border-radius:14px;background:var(--surface);overflow:hidden}.bulkInvoiceCard.ready{border-left-color:#22a06b}.bulkInvoiceCard.needsReview{border-left-color:#d19a24}.bulkInvoiceCard.posted{border-left-color:#4f6bed;opacity:.82}.bulkInvoiceCardHead{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:9px;text-align:left;border:0;background:transparent;padding:10px 12px;cursor:pointer}.bulkInvoiceCardHead span b,.bulkInvoiceCardHead span small{display:block}.bulkInvoiceCardHead span b{font-size:11px}.bulkInvoiceCardHead span small{font-size:9px;color:var(--muted);margin-top:2px}.bulkInvoiceCardHead strong{display:flex;align-items:center;gap:4px;font-size:9px}.scanPosted{color:#3357c7}.scanReady{color:#16784d}.scanNeeds{color:#a16207}.bulkInvoiceCardBody{padding:0 12px 12px;border-top:1px solid var(--line)}.bulkInvoiceHeaderGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding:12px 0}.bulkInvoiceHeaderGrid label{display:grid;gap:4px}.bulkInvoiceHeaderGrid label>span{font-size:9px;font-weight:800;color:var(--muted)}.bulkInvoiceHeaderGrid label.wide{grid-column:span 2}.bulkInvoiceHeaderGrid input,.bulkInvoiceHeaderGrid select,.bulkInvoiceHeaderGrid textarea{width:100%;min-width:0}.bulkInvoiceHeaderGrid textarea{min-height:58px}.bulkInvoiceHeaderGrid small{font-size:8px;color:var(--muted)}.bulkInvoiceItems{overflow:auto;border:1px solid var(--line);border-radius:11px}.bulkInvoiceItems table{border-collapse:collapse;min-width:1050px;width:100%}.bulkInvoiceItems th,.bulkInvoiceItems td{padding:6px;border-bottom:1px solid var(--line);vertical-align:top}.bulkInvoiceItems th{font-size:9px;background:var(--surface-2);position:sticky;top:0;z-index:1}.bulkInvoiceItems input,.bulkInvoiceItems select{width:100%;min-width:80px}.bulkInvoiceItems td:nth-child(2){min-width:245px}.bulkInvoiceItems td small{display:block;font-size:8px;color:#b45309;margin-top:3px}.bulkInvoiceAddLine{margin:8px}.bulkInvoiceValidation{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:9px;padding:8px 10px;border:1px solid #f0d38d;background:#fff9e9;border-radius:10px}.bulkInvoiceValidation b,.bulkInvoiceValidation span{font-size:9px}.bulkInvoiceValidation span{padding:3px 6px;border-radius:999px;background:#fff;color:#9a5e00}.bulkInvoiceActions{position:sticky;bottom:-1px;z-index:5;margin:12px -1px -1px!important;padding:10px 12px!important;background:color-mix(in srgb,var(--surface,#fff) 94%,transparent);backdrop-filter:blur(12px);border-top:1px solid var(--line)}
 @media(max-width:900px){.bulkInvoiceHeaderGrid{grid-template-columns:repeat(2,minmax(0,1fr))}.bulkInvoiceScanModal{width:calc(100vw - 8px);max-height:97vh}}@media(max-width:520px){.bulkInvoiceHeaderGrid{grid-template-columns:1fr}.bulkInvoiceHeaderGrid label.wide{grid-column:span 1}.bulkInvoiceCardHead{grid-template-columns:auto 1fr}.bulkInvoiceCardHead strong{grid-column:2}.bulkInvoiceScanTopbar>*{width:100%}}
+
+/* Sales invoice: fill the available page width instead of sizing to values.
+   Scoped so purchase forms and other legacy composers retain their layout. */
+.salesInvoiceFullWidth.oldDmsInvoiceComposer {
+  container: sales-invoice / inline-size;
+  width: 100%;
+  max-width: none;
+  padding: 16px !important;
+  border-radius: 14px;
+}
+.salesInvoiceFullWidth .oldDmsCreateHead { padding-bottom: 12px; margin-bottom: 14px; }
+.salesInvoiceFullWidth .oldDmsCreateHead > div:first-child { flex-wrap: wrap; }
+.salesInvoiceFullWidth .oldDmsCreateHead b { font-size: 13px; }
+.salesInvoiceFullWidth .oldDmsTopLine,
+.salesInvoiceFullWidth .oldDmsMiniFields {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: flex-start !important;
+  gap: 12px !important;
+  margin-bottom: 14px;
+}
+.salesInvoiceFullWidth .oldDmsTopLine > label,
+.salesInvoiceFullWidth .oldDmsMiniFields > label {
+  flex: 1 1 160px !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  max-inline-size: 100% !important;
+}
+.salesInvoiceFullWidth .oldDmsTopLine > label.od-wide,
+.salesInvoiceFullWidth .oldDmsMiniFields > label.od-wide,
+.salesInvoiceFullWidth .oldDmsMiniFields > label.od-remarks { flex: 2 1 300px !important; }
+.salesInvoiceFullWidth .oldDmsProductArea { padding: 10px; background: #f7f9fc; border-radius: 12px; }
+.salesInvoiceFullWidth .oldDmsProductRow {
+  display: grid !important;
+  grid-template-columns: repeat(8, minmax(0, 1fr)) !important;
+  align-items: start !important;
+  gap: 12px 10px !important;
+  padding: 12px 0;
+}
+.salesInvoiceFullWidth .oldDmsProductRow > label {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  max-inline-size: 100% !important;
+  grid-column: auto !important;
+}
+.salesInvoiceFullWidth .oldDmsProductRow > label.od-product { grid-column: span 2 !important; }
+.salesInvoiceFullWidth :is(.oldDmsTopLine, .oldDmsProductRow, .oldDmsMiniFields) label { position: relative; gap: 6px !important; }
+.salesInvoiceFullWidth :is(.oldDmsTopLine, .oldDmsProductRow, .oldDmsMiniFields) label > span {
+  display: block;
+  min-height: 28px;
+  font-size: 11px !important;
+  line-height: 14px !important;
+  white-space: normal !important;
+  color: #596579;
+}
+.salesInvoiceFullWidth :is(.oldDmsTopLine, .oldDmsProductRow) label:has(.lookupActionBar) > span { padding-right: 54px; }
+.salesInvoiceFullWidth .lookupSelectRow {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+  grid-template-rows: auto !important;
+  grid-template-areas: "field" !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  max-inline-size: 100% !important;
+  gap: 0 !important;
+}
+.salesInvoiceFullWidth .lookupSelectRow > .lookupActionBar { position: absolute !important; top: 0; right: 0; }
+.salesInvoiceFullWidth.oldDmsInvoiceComposer :is(input, select, textarea) {
+  field-sizing: fixed;
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  max-inline-size: 100% !important;
+  height: 36px !important;
+  min-height: 36px !important;
+  border-radius: 8px !important;
+  padding: 7px 8px !important;
+  font-size: 12px !important;
+}
+.salesInvoiceFullWidth.oldDmsInvoiceComposer textarea { height: auto !important; min-height: 72px !important; resize: vertical; }
+.salesInvoiceFullWidth input[readonly] { background: #eef2f7 !important; color: #526176; }
+.salesInvoiceFullWidth :is(input, select, textarea):focus-visible { outline: 2px solid var(--ui-accent, #6264ed); outline-offset: 1px; }
+.salesInvoiceFullWidth label small { overflow-wrap: anywhere; line-height: 1.4 !important; font-size: 10px !important; }
+.salesInvoiceFullWidth .oldDmsProductRow .oldDmsRemoveBtn {
+  grid-column: auto !important;
+  align-self: start !important;
+  justify-self: end;
+  margin-top: 34px;
+  width: 36px;
+  height: 36px;
+}
+.salesInvoiceFullWidth .oldDmsProductRow > label:last-of-type input { font-weight: 800; color: var(--ui-accent, #6264ed); }
+.salesInvoiceFullWidth .oldDmsAddRowBtn { width: 36px; height: 36px; }
+.salesInvoiceFullWidth .oldDmsInvoiceFoot { grid-template-columns: minmax(0, 1fr) minmax(260px, .32fr); gap: 16px; margin-top: 16px; }
+.salesInvoiceFullWidth .oldDmsTotals { align-self: start; padding: 14px; background: #f7f9fc; }
+.salesInvoiceFullWidth .oldDmsTotals > div { font-size: 12px; padding: 6px 0; flex-wrap: wrap; overflow-wrap: anywhere; }
+.salesInvoiceFullWidth .oldDmsTotals > div.grand { font-size: 16px; }
+.salesInvoiceFullWidth .oldDmsSubmitBtn { height: auto; min-height: 40px; padding: 10px; font-size: 12px; }
+.salesInvoiceFullWidth .oldDmsAdjustmentOneRow { gap: 10px !important; padding: 12px 0; }
+.salesInvoiceFullWidth .oldDmsAdjustmentInline { flex: 1 1 240px !important; min-width: 0; max-inline-size: 100% !important; }
+.salesInvoiceFullWidth .oldDmsAdjustmentInline select { flex: 1 1 0; }
+@container sales-invoice (min-width: 1700px) {
+  .salesInvoiceFullWidth .oldDmsProductRow { grid-template-columns: minmax(240px, 2.4fr) repeat(13, minmax(0, 1fr)) 36px !important; }
+  .salesInvoiceFullWidth .oldDmsProductRow > label.od-product { grid-column: auto !important; }
+}
+@container sales-invoice (max-width: 1050px) {
+  .salesInvoiceFullWidth .oldDmsProductRow { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+  .salesInvoiceFullWidth .oldDmsInvoiceFoot { grid-template-columns: minmax(0, 1fr); }
+}
+@container sales-invoice (max-width: 560px) {
+  .salesInvoiceFullWidth .oldDmsProductRow { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .salesInvoiceFullWidth .oldDmsTopLine > label { flex-basis: 140px !important; }
+  .salesInvoiceFullWidth .oldDmsTopLine > label.od-wide { flex-basis: 100% !important; }
+  .salesInvoiceFullWidth .oldDmsProductRow .oldDmsRemoveBtn { grid-column: 2 !important; margin-top: 0; }
+}

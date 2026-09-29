@@ -1,0 +1,80 @@
+.salesInvoiceLayout { width: 100%; min-width: 0; }
+.siLayoutToolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 10px 0; }
+.siLayoutToolbar > span { font-size: 12px; color: #526176; }
+.siLayoutEditor { border: 1px solid #d9dfed; border-radius: 12px; background: #f8faff; padding: 16px; margin-bottom: 14px; }
+.siLayoutEditor p { font-size: 13px; line-height: 1.5; color: #526176; max-width: 900px; }
+.siLayoutEditor details { border-top: 1px solid #dfe5ef; padding: 10px 0; }
+.siLayoutEditor summary { cursor: pointer; font-size: 13px; font-weight: 700; }
+.siWidthGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 12px; margin-top: 12px; }
+.siWidthGrid > label { display: flex; flex-direction: column; gap: 5px; min-width: 0; font-size: 12px; }
+.siWidthGrid > label > div { display: flex; align-items: center; gap: 6px; }
+.siWidthGrid input { width: 100%; min-width: 0; height: 36px; border: 1px solid #cbd4e3; border-radius: 7px; padding: 6px 8px; background: white; }
+.siWidthGrid button { border: 1px solid #cbd4e3; border-radius: 7px; padding: 8px; background: white; }
+.siLayoutActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin: 12px 0; }
+.siLayoutEditor > small { color: #526176; }
+.salesInvoiceLayout .salesInvoiceFullWidth .oldDmsTopLine { width: var(--si-partyBox, 100%) !important; }
+.salesInvoiceLayout .salesInvoiceFullWidth .oldDmsProductArea { width: var(--si-productBox, 100%) !important; }
+.salesInvoiceLayout .salesInvoiceFullWidth :is(.oldDmsAdjustmentOneRow, .oldDmsAdjustTableWrap) { width: var(--si-adjustBox, 100%) !important; }
+.salesInvoiceLayout.siCustomFooter .salesInvoiceFullWidth .oldDmsInvoiceFoot { display: flex; flex-wrap: wrap; }
+.salesInvoiceLayout.siCustomFooter .salesInvoiceFullWidth .oldDmsHsnBlock { flex: 0 0 calc(var(--si-detailsBox, 70%) - 8px); max-width: 100%; min-width: 0; }
+.salesInvoiceLayout.siCustomFooter .salesInvoiceFullWidth .oldDmsTotals { flex: 0 0 calc(var(--si-totalsBox, 30%) - 8px); max-width: 100%; min-width: 0; }
+.salesInvoiceLayout.siCustomFields .salesInvoiceFullWidth .oldDmsProductRow { display: flex !important; flex-wrap: wrap !important; }
+.salesInvoiceLayout.siCustomFields .salesInvoiceFullWidth [data-invoice-field] {
+  flex: 0 0 min(100%, var(--si-field-width, 140px)) !important;
+  width: min(100%, var(--si-field-width, 140px)) !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  max-inline-size: 100% !important;
+}
+@media (max-width: 600px) {
+  .salesInvoiceLayout.siCustomFooter .salesInvoiceFullWidth .oldDmsHsnBlock,
+  .salesInvoiceLayout.siCustomFooter .salesInvoiceFullWidth .oldDmsTotals { flex-basis: 100%; }
+}
+@media print { .siLayoutToolbar, .siLayoutEditor { display: none !important; } }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="buyer"] { --si-field-width: var(--si-buyer, 300px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="date"] { --si-field-width: var(--si-date, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="invoice"] { --si-field-width: var(--si-invoice, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="warehouse"] { --si-field-width: var(--si-warehouse, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="arn"] { --si-field-width: var(--si-arn, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="sanction"] { --si-field-width: var(--si-sanction, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="pending"] { --si-field-width: var(--si-pending, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="balance"] { --si-field-width: var(--si-balance, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="net"] { --si-field-width: var(--si-net, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="payment"] { --si-field-width: var(--si-payment, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="transport"] { --si-field-width: var(--si-transport, 300px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="product"] { --si-field-width: var(--si-product, 300px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="hsn"] { --si-field-width: var(--si-hsn, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="grossUnit"] { --si-field-width: var(--si-grossUnit, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="grossQty"] { --si-field-width: var(--si-grossQty, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="available"] { --si-field-width: var(--si-available, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="netQty"] { --si-field-width: var(--si-netQty, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="unit"] { --si-field-width: var(--si-unit, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="mrp"] { --si-field-width: var(--si-mrp, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="grade"] { --si-field-width: var(--si-grade, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="sale"] { --si-field-width: var(--si-sale, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="basic"] { --si-field-width: var(--si-basic, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="discount"] { --si-field-width: var(--si-discount, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="gst"] { --si-field-width: var(--si-gst, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="total"] { --si-field-width: var(--si-total, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="gstType"] { --si-field-width: var(--si-gstType, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="order"] { --si-field-width: var(--si-order, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="packages"] { --si-field-width: var(--si-packages, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="delivery"] { --si-field-width: var(--si-delivery, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="remarks"] { --si-field-width: var(--si-remarks, 300px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="eStatus"] { --si-field-width: var(--si-eStatus, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="irn"] { --si-field-width: var(--si-irn, 300px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="ack"] { --si-field-width: var(--si-ack, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="ackDate"] { --si-field-width: var(--si-ackDate, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="qr"] { --si-field-width: var(--si-qr, 300px); }
+/* Purchase Invoice uses the same responsive width engine, with its own saved values. */
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="fy"] { --si-field-width: var(--si-fy, 100px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="supplier"] { --si-field-width: var(--si-supplier, 300px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="gstin"] { --si-field-width: var(--si-gstin, 180px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="purchaseType"] { --si-field-width: var(--si-purchaseType, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="landed"] { --si-field-width: var(--si-landed, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="transportation"] { --si-field-width: var(--si-transportation, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="labour"] { --si-field-width: var(--si-labour, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="localFreight"] { --si-field-width: var(--si-localFreight, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="miscellaneous"] { --si-field-width: var(--si-miscellaneous, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="landedPercent"] { --si-field-width: var(--si-landedPercent, 140px); }
+.salesInvoiceLayout .salesInvoiceFullWidth [data-invoice-field="landedTotal"] { --si-field-width: var(--si-landedTotal, 140px); }

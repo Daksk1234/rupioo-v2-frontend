@@ -13,6 +13,7 @@ import PageHeader from "../components/PageHeader.jsx";
 import DataTable from "../components/DataTable.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import { api, getUser } from "../lib/api.js";
+import { configuredFinancialYear, financialYearOptions } from "../lib/financialYear.js";
 import { bankFieldsFromIfsc, lookupIfscMaster, normalizeIfsc } from "../lib/ifscLookup.js";
 import { accessForPath } from "../lib/permissionAccess.js";
 import "../profile-bank.css";
@@ -30,8 +31,8 @@ const uniq = (arr) => [...new Set(arr.filter(Boolean))];
 export default function BankAccountPage() {
   const access = accessForPath("/dms/bank-accounts");
   const session = getUser();
-  const selectedFy = localStorage.getItem("financialYearSelected") || session?.companyProfile?.financialYear || "";
-  const years = uniq([...(session?.companyProfile?.financialYears || []), session?.companyProfile?.financialYear, selectedFy]);
+  const selectedFy = configuredFinancialYear(session);
+  const years = financialYearOptions(session, { count: 10, extra: [selectedFy] });
 
   const [rows, setRows] = useState([]), [meta, setMeta] = useState({ page: 1, pages: 1, total: 0 });
   const [q, setQ] = useState(""), [status, setStatus] = useState("ACTIVE"), [page, setPage] = useState(1);

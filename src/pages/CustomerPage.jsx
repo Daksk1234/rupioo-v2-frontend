@@ -35,6 +35,7 @@ import {
   normalizeIfsc,
 } from "../lib/ifscLookup.js";
 import { accessForPath } from "../lib/permissionAccess.js";
+import { configuredFinancialYear } from "../lib/financialYear.js";
 
 const digits = (v) => String(v || "").replace(/\D/g, "");
 const cityKey = (v) =>
@@ -49,12 +50,35 @@ const needsTransport = (customerCity, firmCity) =>
     cityKey(firmCity) &&
     cityKey(customerCity) !== cityKey(firmCity),
   );
-const currentFY = () => {
-  try {
-    return localStorage.getItem("financialYearSelected") || "2026-27";
-  } catch {
-    return "2026-27";
-  }
+const currentFY = () => configuredFinancialYear(getUser());
+const gstTypeFromApi = (value) => {
+  const type = String(value || "").trim().toUpperCase();
+  if (type.includes("COMPOS")) return "COMPOSITION";
+  if (type.includes("UNREG")) return "UNREGISTERED";
+  if (type.includes("REGULAR")) return "REGULAR";
+  return "UNKNOWN";
+};
+const geoValue = (value) =>
+  value === null || value === undefined || value === "" ? "" : String(value);
+const recordArray = (value) =>
+  Array.isArray(value)
+    ? value.filter((item) => item && typeof item === "object")
+    : value && typeof value === "object"
+      ? [value]
+      : [];
+const safeText = (value, fallback = "") => {
+  if (value === null || value === undefined || value === "") return fallback;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+    return String(value);
+  return fallback;
+};
+const billingAddressOf = (value) => {
+  const addresses = recordArray(value);
+  return (
+    addresses.find((address) => String(address?.type || "").toUpperCase() === "BILLING") ||
+    addresses[0] ||
+    {}
+  );
 };
 const emptyBank = () => ({
   ifsc: "",
@@ -76,6 +100,21 @@ const blankCustomer = () => ({
   lastName: "",
   passportNumber: "",
   tradeName: "",
+  businessType: "",
+  firmType: "",
+  gstStatus: "",
+  gstRange: "",
+  eInvoiceStatus: "",
+  filingFrequency: "",
+  businessLatitude: "",
+  businessLongitude: "",
+  additionalLatitude: "",
+  additionalLongitude: "",
+  additionalPincode: "",
+  additionalArea: "",
+  additionalCity: "",
+  additionalDistrict: "",
+  additionalState: "",
   ownerName: "",
   ownerMobile: "",
   ownerAadhaar: "",
@@ -91,6 +130,7 @@ const blankCustomer = () => ({
   partyType: "DEBITOR",
   registrationType: "UNKNOWN",
   gstin: "",
+  gstApiVerified: false,
   pan: "",
   email: "",
   dealsInProducts: "",
@@ -242,10 +282,11 @@ const saveCsv = (fields, rows, fileName) => {
   URL.revokeObjectURL(a.href);
 };
 const firstValue = (items = []) => {
+  const list = recordArray(items);
   const row =
-    (items || []).find((x) => x?.primary && x?.value) ||
-    (items || []).find((x) => x?.value) ||
-    (items || [])[0];
+    list.find((x) => x?.primary && x?.value) ||
+    list.find((x) => x?.value) ||
+    list[0];
   return row?.value || "";
 };
 const dateText = (v) => (v ? String(v).slice(0, 10) : "");
@@ -329,7 +370,12 @@ export default function CustomerPage({
     [selected, setSelected] = useState([]),
     [msg, setMsg] = useState(""),
     [deletingAll, setDeletingAll] = useState(false),
-    [downloadingData, setDownloadingData] = useState(false);
+    [downloadingData, setDownloadingData] = useState(false),
+    [listDrafts, setListDrafts] = useState({}),
+    [savingCustomerId, setSavingCustomerId] = useState(""),
+    [savingAllCustomers, setSavingAllCustomers] = useState(false),
+    [customerType, setCustomerType] = useState("ALL"),
+    [typeCounts, setTypeCounts] = useState({ ALL: 0, DEBITOR: 0, CREDITOR: 0, BOTH: 0, OTHER: 0 });
   const isSuperAdmin = String(user?.role || "").toUpperCase() === "SUPERADMIN";
   const bulkUploadInput = useRef(null);
   const [bulkReview, setBulkReview] = useState(null),
@@ -347,6 +393,7 @@ export default function CustomerPage({
       autoUserId: "",
     }),
     [grades, setGrades] = useState([]),
+    [salesUsers, setSalesUsers] = useState([]),
     [transporters, setTransporters] = useState([]),
     [transporterMatches, setTransporterMatches] = useState([]),
     [transporterBusy, setTransporterBusy] = useState(false),
@@ -374,15 +421,30 @@ export default function CustomerPage({
   const load = async (next = page) => {
     try {
       const d = await api(
-        `${endpoint}?q=${encodeURIComponent(q)}&page=${next}&limit=50`,
+        `${endpoint}?q=${encodeURIComponent(q)}&page=${next}&limit=50${!approvalsOnly && customerType !== "ALL" ? `&partyType=${encodeURIComponent(customerType)}` : ""}`,
       );
-      setRows(d.items || []);
-      setMeta(d.meta || { pages: 1, total: 0 });
-      setPage(d.meta?.page || next);
+      const items = Array.isArray(d?.items)
+        ? d.items.filter((row) => row && typeof row === "object")
+        : Array.isArray(d)
+          ? d.filter((row) => row && typeof row === "object")
+          : [];
+      const nextMeta = d?.meta && typeof d.meta === "object"
+        ? d.meta
+        : { pages: 1, total: items.length, page: next };
+      setRows(items);
+      if (d?.typeCounts && typeof d.typeCounts === "object") setTypeCounts(d.typeCounts);
+      setMeta(nextMeta);
+      setPage(Number(nextMeta.page || next));
     } catch (e) {
       setMsg(e.message);
     }
   };
+  useEffect(() => {
+    if (!approvalsOnly) load(1);
+    // customerType is intentionally the trigger; load also uses current search text.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerType]);
+
   const downloadCustomerData = async () => {
     if (!isSuperAdmin) return;
     setDownloadingData(true);
@@ -411,7 +473,7 @@ export default function CustomerPage({
   };
   const loadTransporters = () =>
     api("/operations/transporters?limit=200")
-      .then((d) => setTransporters(d.items || []))
+      .then((d) => setTransporters(Array.isArray(d?.items) ? d.items : []))
       .catch(() => setTransporters([]));
   const loadTransportMatches = async (target = form) => {
     if (!needsTransport(target.city, firmLocation.city)) {
@@ -425,7 +487,7 @@ export default function CustomerPage({
       const d = await api(
         `/operations/transporters/service-match?pincode=${encodeURIComponent(pin)}&city=${encodeURIComponent(target.city || "")}&state=${encodeURIComponent(target.state || "")}`,
       );
-      const items = d.items || [];
+      const items = Array.isArray(d?.items) ? d.items : [];
       setTransporterMatches(items);
       return items;
     } catch (e) {
@@ -479,9 +541,12 @@ export default function CustomerPage({
   useEffect(() => {
     load(1);
     api("/catalog/grades?limit=200&status=ACTIVE")
-      .then((d) => setGrades(d.items || []))
+      .then((d) => setGrades(Array.isArray(d?.items) ? d.items : []))
       .catch(() => {});
     loadTransporters();
+    api("/access/sales-pincode-users")
+      .then((d) => setSalesUsers((Array.isArray(d) ? d : []).filter((u) => String(u?.roleCode || "").toUpperCase() === "SALES_PERSON")))
+      .catch(() => setSalesUsers([]));
     api("/company/profile")
       .then((d) =>
         setFirmLocation({
@@ -790,28 +855,100 @@ export default function CustomerPage({
         serviceArea: f.serviceArea || value,
       }));
   };
-  const searchGst = async () => {
+  const searchGst = async (gstinValue = form.gstin) => {
     try {
-      const gstin = String(form.gstin || "")
+      const gstin = String(gstinValue || "")
         .trim()
-        .toUpperCase();
-      if (gstin.length !== 15)
-        throw new Error("Enter a valid 15-character GSTIN");
+        .toUpperCase()
+        .replace(/[^0-9A-Z]/g, "")
+        .slice(0, 15);
+      if (gstin.length !== 15) return;
+
+      setMsg("Searching GST details...");
       const r = await api(
         `/reference/gst/search?gstin=${encodeURIComponent(gstin)}`,
       );
-      const p = digits(r.pincode || form.pincode).slice(0, 6);
+      const principal = r.principalAddressRaw || {};
+      const additional = r.additionalAddressRaw || {};
+      const p = digits(principal.pncd || form.pincode).slice(0, 6);
+
       setForm((f) => ({
         ...f,
         gstin: r.gstin || gstin,
-        pan: f.pan || r.pan || "",
-        legalName: r.legalName || r.tradeName || f.legalName,
-        address: r.principalAddress || r.address || f.address,
+        gstApiVerified: true,
+        pan: r.pan || f.pan || "",
+        ownerName: r.ownerName || r.legalName || f.ownerName,
+        tradeName: r.businessName || r.tradeName || f.tradeName,
+        legalName:
+          r.businessName ||
+          r.tradeName ||
+          r.legalName ||
+          f.legalName,
+        registrationType: gstTypeFromApi(r.taxpayerType),
+        businessType:
+          r.businessType ||
+          (Array.isArray(r.natureOfBusiness)
+            ? r.natureOfBusiness.join(", ")
+            : f.businessType),
+        firmType: r.constitution || f.firmType,
+        gstStatus: r.status || f.gstStatus,
+        gstRange: r.jurisdictionCentre || f.gstRange,
+        eInvoiceStatus: r.eInvoiceStatus || f.eInvoiceStatus,
+        filingFrequency:
+          r.filingFrequency === null || r.filingFrequency === undefined
+            ? ""
+            : String(r.filingFrequency),
+        address: r.principalAddress || f.address,
+        address2: r.additionalAddress || f.address2,
         pincode: p || f.pincode,
-        registrationType: "REGULAR",
+        area: principal.locality || f.area,
+        city: principal.loc || f.city,
+        district: principal.dst || f.district,
+        state: principal.stcd || f.state,
+        businessLatitude: geoValue(
+          r.businessLatitude ??
+            r.principalGeo?.latitude ??
+            principal.lt ??
+            principal.lat ??
+            principal.latitude,
+        ),
+        businessLongitude: geoValue(
+          r.businessLongitude ??
+            r.principalGeo?.longitude ??
+            principal.lg ??
+            principal.lng ??
+            principal.lon ??
+            principal.longitude,
+        ),
+        additionalLatitude: geoValue(
+          r.additionalLatitude ??
+            r.additionalGeo?.latitude ??
+            additional.lt ??
+            additional.lat ??
+            additional.latitude,
+        ),
+        additionalLongitude: geoValue(
+          r.additionalLongitude ??
+            r.additionalGeo?.longitude ??
+            additional.lg ??
+            additional.lng ??
+            additional.lon ??
+            additional.longitude,
+        ),
+        additionalPincode: digits(additional.pncd).slice(0, 6),
+        additionalArea: additional.locality || "",
+        additionalCity: additional.loc || "",
+        additionalDistrict: additional.dst || "",
+        additionalState: additional.stcd || "",
       }));
+
+      // Keep the existing pincode master + salesperson-assignment workflow.
       if (p.length === 6) await lookupPincode("company", p);
-      setMsg("GST details loaded");
+      setMsg(
+        r.additionalPlaces?.length > 1
+          ? `GST details loaded. ${r.additionalPlaces.length} additional places were returned; the first additional address is shown in the form.`
+          : "GST details loaded from AppyFlow.",
+      );
     } catch (e) {
       setMsg(e.message);
     }
@@ -864,14 +1001,21 @@ export default function CustomerPage({
   };
   const openEdit = async (row) => {
     try {
-      const d = await api(`/customers/${row.globalCustomerId}`);
-      const c = d.company || {},
-        g = d.global || {},
-        contact = c.contacts?.find((x) => x.primary) || c.contacts?.[0] || {},
-        a =
-          c.addresses?.find((x) => x.type === "BILLING") ||
-          c.addresses?.[0] ||
-          {};
+      const customerId = row?.globalCustomerId || row?._id || row?.id;
+      if (!customerId) throw new Error("Customer ID is missing for this record");
+      const d = await api(`/customers/${customerId}`);
+      const c = d?.company && typeof d.company === "object" ? d.company : {};
+      const g = d?.global && typeof d.global === "object" ? d.global : {};
+      const contacts = recordArray(c.contacts);
+      const addresses = recordArray(c.addresses);
+      const gstins = recordArray(g.gstins);
+      const contact = contacts.find((x) => x?.primary) || contacts[0] || {};
+      const a =
+        addresses.find((x) => String(x?.type || "").toUpperCase() === "BILLING") ||
+        addresses[0] ||
+        {};
+      const additional =
+        addresses.find((x) => String(x?.type || "").toUpperCase() === "ADDITIONAL") || {};
       const next = {
         ...blankCustomer(),
         ownerName: c.ownerName || contact.name || "",
@@ -884,16 +1028,37 @@ export default function CustomerPage({
         ownerDistrict: c.ownerDistrict || "",
         ownerState: c.ownerState || "",
         ownerAddress: c.ownerAddress || "",
-        legalName: c.localName || g.legalName || "",
+        legalName: c.localName || g.tradeName || g.legalName || "",
+        tradeName: g.tradeName || "",
+        businessType: c.businessType || "",
+        firmType: c.firmType || g.gstProfile?.constitution || "",
+        gstStatus: c.gstStatus || gstins[0]?.status || "",
+        gstRange: c.gstRange || "",
+        eInvoiceStatus: c.eInvoiceStatus || "",
+        filingFrequency:
+          c.filingFrequency || g.gstProfile?.filingStatus || "",
         partyType: c.partyType || "DEBITOR",
-        registrationType: c.registrationType || "UNKNOWN",
-        gstin: g.gstins?.[0]?.value || "",
+        registrationType:
+          c.registrationType ||
+          gstTypeFromApi(g.gstProfile?.taxpayerType) ||
+          "UNKNOWN",
+        gstin: gstins[0]?.value || "",
+        gstApiVerified: String(gstins[0]?.status || "").toUpperCase() === "VERIFIED",
         pan: g.pan || "",
         email: contact.email || "",
         dealsInProducts: c.dealsInProducts || "",
         annualTurnover: c.annualTurnover || 0,
         address: a.address || g.registeredAddress || "",
-        address2: c.address2 || "",
+        address2: additional.address || c.address2 || "",
+        businessLatitude: geoValue(a.latitude),
+        businessLongitude: geoValue(a.longitude),
+        additionalLatitude: geoValue(additional.latitude),
+        additionalLongitude: geoValue(additional.longitude),
+        additionalPincode: additional.pincode || "",
+        additionalArea: additional.area || "",
+        additionalCity: additional.city || "",
+        additionalDistrict: additional.district || "",
+        additionalState: additional.state || "",
         companyContactNumber: c.companyContactNumber || contact.mobile || "",
         pincode: a.pincode || "",
         area: a.area || "",
@@ -1010,7 +1175,9 @@ export default function CustomerPage({
         throw new Error(
           "Set the firm's City in Company Profile before creating customers",
         );
+      const isCreditor = String(form.partyType || "").toUpperCase() === "CREDITOR";
       const nonLocal = Boolean(
+        !isCreditor &&
         hasFirmCity &&
         form.city &&
         needsTransport(form.city, firmLocation.city),
@@ -1042,7 +1209,7 @@ export default function CustomerPage({
           throw new Error("IFSC code is mandatory for every bank account");
       }
 
-      if (!migratedEdit) {
+      if (!migratedEdit && !isCreditor) {
         if (!(assignment.users || []).length)
           throw new Error(
             `Pincode ${form.pincode} is not assigned to any Sales Person. Assign the pincode first, then create the customer.`,
@@ -1053,6 +1220,12 @@ export default function CustomerPage({
 
       const payload = {
         ...form,
+        tradeName: form.legalName,
+        salespersonId: isCreditor ? "" : form.salespersonId,
+        assignedTransport: isCreditor ? "" : form.assignedTransport,
+        assignedTransportGlobalId: isCreditor ? "" : form.assignedTransportGlobalId,
+        assignedTransportBookingStationId: isCreditor ? "" : form.assignedTransportBookingStationId,
+        assignedTransportDeliveryStationId: isCreditor ? "" : form.assignedTransportDeliveryStationId,
         regionType:
           hasFirmCity && form.city
             ? nonLocal
@@ -1071,7 +1244,45 @@ export default function CustomerPage({
             city: form.city,
             district: form.district,
             state: form.state,
+            latitude:
+              form.businessLatitude === ""
+                ? undefined
+                : Number(form.businessLatitude),
+            longitude:
+              form.businessLongitude === ""
+                ? undefined
+                : Number(form.businessLongitude),
+            capturedAt:
+              form.businessLatitude !== "" && form.businessLongitude !== ""
+                ? new Date().toISOString()
+                : undefined,
           },
+          ...(String(form.address2 || "").trim()
+            ? [
+                {
+                  type: "ADDITIONAL",
+                  address: form.address2,
+                  pincode: form.additionalPincode,
+                  area: form.additionalArea,
+                  city: form.additionalCity,
+                  district: form.additionalDistrict,
+                  state: form.additionalState,
+                  latitude:
+                    form.additionalLatitude === ""
+                      ? undefined
+                      : Number(form.additionalLatitude),
+                  longitude:
+                    form.additionalLongitude === ""
+                      ? undefined
+                      : Number(form.additionalLongitude),
+                  capturedAt:
+                    form.additionalLatitude !== "" &&
+                    form.additionalLongitude !== ""
+                      ? new Date().toISOString()
+                      : undefined,
+                },
+              ]
+            : []),
         ],
         contacts: [
           {
@@ -1136,6 +1347,7 @@ export default function CustomerPage({
         x.filter((id) => String(id) !== String(r.globalCustomerId)),
       );
       setMsg(d?.message || "Customer deleted from active list");
+      if (edit && String(edit.globalCustomerId) === String(r.globalCustomerId)) { setShow(false); setEdit(null); }
       const nextPage = rows.length === 1 && page > 1 ? page - 1 : page;
       await load(nextPage);
     } catch (e) {
@@ -1173,6 +1385,81 @@ export default function CustomerPage({
       setDeletingAll(false);
     }
   };
+  const rowDraftValue = (row, field, fallback = "") => {
+    const id = row?.globalCustomerId;
+    return Object.prototype.hasOwnProperty.call(listDrafts[id] || {}, field)
+      ? listDrafts[id][field]
+      : fallback;
+  };
+  const setRowDraft = (row, field, value) => {
+    const id = row?.globalCustomerId;
+    if (!id) return;
+    setListDrafts((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] || {}), [field]: value },
+    }));
+  };
+  const saveCustomerListRow = async (row, event) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    const id = row?.globalCustomerId;
+    const fields = listDrafts[id] || {};
+    if (!id || !Object.keys(fields).length) {
+      setMsg("No changes to save for this customer.");
+      return;
+    }
+    try {
+      setSavingCustomerId(id);
+      const result = await api(`/customers/${id}/list-fields-save`, {
+        method: "PUT",
+        body: JSON.stringify({ fields }),
+      });
+      setMsg(result?.message || `${row?.localName || "Customer"} saved everywhere required.`);
+      setListDrafts((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      await load(page);
+    } catch (e) {
+      setMsg(e.message);
+    } finally {
+      setSavingCustomerId("");
+    }
+  };
+  const saveAllCustomerListRows = async (event) => {
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+    const entries = Object.entries(listDrafts).filter(([, fields]) => fields && Object.keys(fields).length);
+    if (!entries.length) {
+      setMsg("No customer changes to save.");
+      return;
+    }
+    try {
+      setSavingAllCustomers(true);
+      const result = await api("/customers/list-fields-bulk-save", {
+        method: "PUT",
+        body: JSON.stringify({ customers: entries.map(([globalCustomerId, fields]) => ({ globalCustomerId, fields })) }),
+      });
+      const failedRows = Array.isArray(result?.failed) ? result.failed : [];
+      const failedIds = new Set(failedRows.map((x) => String(x.globalCustomerId || "")));
+      setListDrafts((prev) => {
+        const next = { ...prev };
+        entries.forEach(([id]) => { if (!failedIds.has(String(id))) delete next[id]; });
+        return next;
+      });
+      const failed = Number(result?.failedCount ?? failedRows.length);
+      const saved = Number(result?.savedCount ?? (entries.length - failed));
+      const sample = failedRows.slice(0, 3).map((x) => `${x.name || x.globalCustomerId}: ${x.error}`).join(" | ");
+      setMsg(`${saved} customer(s) saved${failed ? `; ${failed} failed${sample ? `: ${sample}` : ""}` : " successfully"}.`);
+      await load(page);
+    } catch (e) {
+      setMsg(e.message);
+    } finally {
+      setSavingAllCustomers(false);
+    }
+  };
+
   const open360 = async (r) => {
     try {
       setView360(
@@ -1247,32 +1534,37 @@ export default function CustomerPage({
               <div className="formGrid">
                 <label>
                   GSTIN *
-                  <div className="gstInputRow">
-                    <input
-                      autoFocus
-                      value={form.gstin}
-                      onChange={(e) =>
-                        change("gstin", e.target.value.toUpperCase())
-                      }
-                      onKeyDown={(e) => e.key === "Enter" && searchGst()}
-                      maxLength={15}
-                    />
-                    <button
-                      type="button"
-                      className="gstLookupButton iconOnlyLookup"
-                      onClick={searchGst}
-                      title="Search GST"
-                      aria-label="Search GST"
-                    >
-                      <Search size={14} />
-                    </button>
-                  </div>
+                  <input
+                    autoFocus
+                    value={form.gstin}
+                    onChange={(e) => {
+                      const gstin = String(e.target.value || "")
+                        .toUpperCase()
+                        .replace(/[^0-9A-Z]/g, "")
+                        .slice(0, 15);
+                      change("gstin", gstin);
+                      if (gstin.length === 15) searchGst(gstin);
+                    }}
+                    maxLength={15}
+                    placeholder="Enter 15-character GSTIN — auto lookup"
+                    autoComplete="off"
+                  />
+                  <small className="fieldHint">
+                    GST details search automatically after all 15 characters are entered.
+                  </small>
                 </label>
                 <label>
-                  Company / Customer Name *
+                  Customer / Business Name *
                   <input
                     value={form.legalName}
-                    onChange={(e) => change("legalName", e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setForm((f) => ({
+                        ...f,
+                        legalName: value,
+                        tradeName: value,
+                      }));
+                    }}
                   />
                 </label>
                 <label>
@@ -1287,16 +1579,51 @@ export default function CustomerPage({
                   </select>
                 </label>
                 <label>
-                  Registration Type
+                  GST Type
                   <select
                     value={form.registrationType}
                     onChange={(e) => change("registrationType", e.target.value)}
                   >
-                    <option>UNKNOWN</option>
-                    <option>REGULAR</option>
-                    <option>COMPOSITION</option>
-                    <option>UNREGISTERED</option>
+                    <option value="UNKNOWN">UNKNOWN</option>
+                    <option value="REGULAR">REGULAR</option>
+                    <option value="UNREGISTERED">UNREGISTERED</option>
+                    <option value="COMPOSITION">COMPOSITE</option>
                   </select>
+                </label>
+                <label className="span2">
+                  Business Type
+                  <input
+                    value={form.businessType}
+                    onChange={(e) => change("businessType", e.target.value)}
+                    placeholder="Nature of business returned by GST"
+                  />
+                </label>
+                <label>
+                  Firm Type
+                  <input
+                    value={form.firmType}
+                    onChange={(e) => change("firmType", e.target.value)}
+                  />
+                </label>
+                <label>
+                  GST Status
+                  <input value={form.gstStatus} readOnly />
+                </label>
+                <label>
+                  Range
+                  <input value={form.gstRange} readOnly />
+                </label>
+                <label>
+                  E-Invoice Status
+                  <input value={form.eInvoiceStatus} readOnly />
+                </label>
+                <label>
+                  Filing Frequency
+                  <input
+                    value={form.filingFrequency}
+                    readOnly
+                    placeholder="Not available"
+                  />
                 </label>
                 <label>
                   Company PAN
@@ -1400,18 +1727,26 @@ export default function CustomerPage({
                   <input value={form.state} readOnly />
                 </label>
                 <label>
-                  Address 1
+                  Business Address
                   <textarea
                     value={form.address}
                     onChange={(e) => change("address", e.target.value)}
                   />
+                  <small className="fieldHint">
+                    Lat: {form.businessLatitude || "—"} · Long:{" "}
+                    {form.businessLongitude || "—"}
+                  </small>
                 </label>
                 <label>
-                  Address 2
+                  Additional Address
                   <textarea
                     value={form.address2}
                     onChange={(e) => change("address2", e.target.value)}
                   />
+                  <small className="fieldHint">
+                    Lat: {form.additionalLatitude || "—"} · Long:{" "}
+                    {form.additionalLongitude || "—"}
+                  </small>
                 </label>
               </div>
             </section>
@@ -1876,7 +2211,7 @@ export default function CustomerPage({
                       }
                       onReturn={() =>
                         api("/catalog/grades?limit=200&status=ACTIVE")
-                          .then((d) => setGrades(d.items || []))
+                          .then((d) => setGrades(Array.isArray(d?.items) ? d.items : []))
                           .catch(() => {})
                       }
                     />
@@ -1970,6 +2305,11 @@ export default function CustomerPage({
           </div>
         )}
         <div className="formActions" style={{ marginBottom: 24 }}>
+          {edit && canDeleteCustomers && (
+            <button className="btn dangerBtn" onClick={() => deleteCustomer(edit)}>
+              <Trash2 /> Delete Customer
+            </button>
+          )}
           <button className="btn ghost" onClick={() => setShow(false)}>
             Cancel
           </button>
@@ -2083,6 +2423,17 @@ export default function CustomerPage({
             />
           </div>
           <div className="toolbarActions">
+            {!approvalsOnly && (
+              <button
+                type="button"
+                className="btn primary"
+                disabled={savingAllCustomers || Object.keys(listDrafts).length === 0}
+                onClick={(e) => saveAllCustomerListRows(e)}
+                title="Save all edited customer rows in one request"
+              >
+                {savingAllCustomers ? "Saving All..." : `Save All Changes (${Object.keys(listDrafts).length})`}
+              </button>
+            )}
             <button className="btn ghost" onClick={() => load()}>
               <RefreshCw />
               Refresh
@@ -2099,13 +2450,38 @@ export default function CustomerPage({
             )}
           </div>
         </div>
+        {!approvalsOnly && (
+          <div className="customerTypeTabs" role="tablist" aria-label="Customer type">
+            {[
+              ["ALL", "All"],
+              ["DEBITOR", "Debtors"],
+              ["CREDITOR", "Creditors"],
+              ["BOTH", "Both"],
+              ["OTHER", "Other"],
+            ].map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={`btn ${customerType === value ? "primary" : "ghost"}`}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setCustomerType(value);
+                  setPage(1);
+                }}
+              >
+                {label} ({Number(typeCounts?.[value] || 0)})
+              </button>
+            ))}
+          </div>
+        )}
         <DataTable
           rows={rows}
           selectable={!approvalsOnly}
           selectedIds={selected}
           onToggle={toggle}
           onToggleAll={toggleAll}
-          rowId={(r) => r.globalCustomerId}
+          rowId={(r) => r?.globalCustomerId || r?._id || r?.id || "customer-row"}
           columns={[
             {
               key: "localName",
@@ -2113,75 +2489,114 @@ export default function CustomerPage({
               render: (r) => (
                 <div className="customerCell">
                   <EditMasterLink onClick={() => openEdit(r)}>
-                    {r.localName}
+                    {safeText(r?.localName, "Unnamed Customer")}
                   </EditMasterLink>
-                  <small>{r.displayIdentifier}</small>
+                  <small>{safeText(r?.displayIdentifier, "—")}</small>
                 </div>
               ),
             },
-            { key: "partyType", label: "Party Type" },
+            {
+              key: "gstin",
+              label: "GSTIN",
+              render: (r) => {
+                const gst = (r?.global?.gstins || [])[0] || {};
+                const verified = String(gst?.status || "").toUpperCase() === "VERIFIED";
+                return <div><span>{safeText(gst?.value, "—")}</span>{verified && <small style={{display:"block",fontWeight:700}}>✓ Verified GSTIN</small>}</div>;
+              },
+            },
+            {
+              key: "transporter",
+              label: "Transporter",
+              render: (r) => String(r?.partyType || "").toUpperCase() === "CREDITOR" ? <small>Not required</small> : (
+                <select onClick={(e) => e.stopPropagation()} value={rowDraftValue(r, "assignedTransport", r?.assignedTransport || "")} onChange={(e) => setRowDraft(r, "assignedTransport", e.target.value)}>
+                  <option value="">Select Transporter</option>
+                  {transporters.map((t) => <option key={t._id} value={t._id}>{t.name}</option>)}
+                </select>
+              ),
+            },
+            {
+              key: "salesperson",
+              label: "Sales Person",
+              render: (r) => String(r?.partyType || "").toUpperCase() === "CREDITOR" ? <small>Not required</small> : (
+                <select onClick={(e) => e.stopPropagation()} value={rowDraftValue(r, "salespersonId", r?.salespersonId || "")} onChange={(e) => setRowDraft(r, "salespersonId", e.target.value)}>
+                  <option value="">Select Sales Person</option>
+                  {salesUsers.map((u) => <option key={u._id} value={u._id}>{u.name}</option>)}
+                </select>
+              ),
+            },
+            {
+              key: "password",
+              label: "Password",
+              render: (r) => (
+                <input onClick={(e) => e.stopPropagation()} type="password" value={rowDraftValue(r, "password", "")} placeholder={r?.portalLoginEnabled ? "Set new password" : "Set password"} onChange={(e) => setRowDraft(r, "password", e.target.value)} />
+              ),
+            },
+            {
+              key: "paymentType",
+              label: "Payment Type",
+              render: (r) => (
+                <select onClick={(e) => e.stopPropagation()} value={rowDraftValue(r, "paymentType", r?.paymentType || "CASH")} onChange={(e) => setRowDraft(r, "paymentType", e.target.value)}>
+                  <option value="CASH">Cash</option><option value="CREDIT">Credit</option>
+                </select>
+              ),
+            },
+            {
+              key: "openingBalance",
+              label: "Opening Balance",
+              render: (r) => (
+                <input onClick={(e) => e.stopPropagation()} type="number" value={rowDraftValue(r, "openingBalance", Number(r?.accountingProfile?.openingBalance || 0))} onChange={(e) => setRowDraft(r, "openingBalance", e.target.value)} style={{width:110}} />
+              ),
+            },
+            {
+              key: "gradeCode",
+              label: "Grade",
+              render: (r) => (
+                <select onClick={(e) => e.stopPropagation()} value={rowDraftValue(r, "gradeCode", r?.gradeCode || "")} onChange={(e) => setRowDraft(r, "gradeCode", e.target.value)}>
+                  <option value="">No Grade</option>
+                  {grades.map((g) => <option key={g._id || g.code} value={g.code}>{g.name || g.code}</option>)}
+                </select>
+              ),
+            },
+            {
+              key: "saveCustomer",
+              label: "Save",
+              render: (r) => {
+                const id = r?.globalCustomerId;
+                const dirty = Boolean(Object.keys(listDrafts[id] || {}).length);
+                return (
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={!dirty || savingCustomerId === id}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      saveCustomerListRow(r, e);
+                    }}
+                    title={dirty ? "Save all changed customer assignments and terms" : "No changes"}
+                  >
+                    {savingCustomerId === id ? "Saving..." : "Save"}
+                  </button>
+                );
+              },
+            },
             {
               key: "pincode",
               label: "Pincode",
-              render: (r) =>
-                r.addresses?.find((a) => a.type === "BILLING")?.pincode ||
-                r.addresses?.[0]?.pincode ||
-                "—",
+              render: (r) => safeText(billingAddressOf(r?.addresses)?.pincode, "—"),
             },
             {
               key: "status",
               label: "Status",
-              render: (r) => <StatusBadge value={r.status} />,
+              render: (r) => <StatusBadge value={safeText(r?.status, "—")} />,
             },
-            {
-              key: "approval",
-              label: "Approval",
-              render: (r) => <StatusBadge value={r.approval?.status || "—"} />,
-            },
-            {
-              key: "paymentType",
-              label: "Terms",
-              render: (r) =>
-                r.paymentType === "CREDIT"
-                  ? `CREDIT • ${r.creditDays || 0}d • ₹${Number(r.creditLimit || 0).toLocaleString("en-IN")}`
-                  : "CASH",
-            },
-            {
+            ...(approvalsOnly ? [{
               key: "actions",
               label: "Actions",
-              render: (r) => (
-                <div className="rowActions">
-                  <button title="View 360°" onClick={() => open360(r)}>
-                    <Eye />
-                  </button>
-                  {!approvalsOnly && (
-                    <button
-                      title="Edit / Update Customer"
-                      onClick={() => openEdit(r)}
-                    >
-                      <Pencil />
-                    </button>
-                  )}
-                  {canApprove(user) &&
-                    (r.status === "PENDING_APPROVAL" || approvalsOnly) && (
-                      <button
-                        title="Review Customer"
-                        onClick={() => reviewCustomer(r)}
-                      >
-                        <UserCheck />
-                      </button>
-                    )}
-                  {!approvalsOnly && canDeleteCustomers && (
-                    <button
-                      title="Delete Customer"
-                      onClick={() => deleteCustomer(r)}
-                    >
-                      <Trash2 />
-                    </button>
-                  )}
-                </div>
-              ),
-            },
+              render: (r) => canApprove(user) ? (
+                <button title="Review Customer" onClick={() => reviewCustomer(r)}><UserCheck /></button>
+              ) : null,
+            }] : []),
           ]}
         />
         <div className="pagination">
@@ -2197,6 +2612,7 @@ export default function CustomerPage({
         </div>
       </section>
 
+      <style>{`.customerTypeTabs{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 14px}.customerTypeTabs .btn{min-width:auto}`}</style>
       {bulkReview && bulkStage === "QUICK" && (
         <CustomerBulkReviewModal
           review={bulkReview}

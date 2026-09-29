@@ -3,15 +3,10 @@ import { RefreshCw, Search } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import DataTable from "../components/DataTable.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
-import { api } from "../lib/api.js";
+import { api, getUser } from "../lib/api.js";
+import { configuredFinancialYear } from "../lib/financialYear.js";
 import EditMasterLink from "../components/EditMasterLink.jsx";
 import { isAdminUser } from "../lib/adminVisibility.js";
-
-const currentFY = () => {
-  const d = new Date();
-  const y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
-  return `${y}-${String((y + 1) % 100).padStart(2, "0")}`;
-};
 
 const profitBand = (value) => {
   const p = Number(value || 0);
@@ -36,7 +31,7 @@ export default function PriceListPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [maxDiscount, setMaxDiscount] = useState(0);
-  const [fy, setFy] = useState(currentFY());
+  const [fy, setFy] = useState(configuredFinancialYear(getUser()));
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState({ page: 1, pages: 1, total: 0 });
 

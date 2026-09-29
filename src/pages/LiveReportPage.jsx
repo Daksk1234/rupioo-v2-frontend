@@ -2,7 +2,8 @@ import React,{useEffect,useMemo,useState} from "react";
 import { RefreshCw,FileSpreadsheet,Printer,Mail,Send } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import DataTable from "../components/DataTable.jsx";
-import { api } from "../lib/api.js";
+import { api, getUser } from "../lib/api.js";
+import { configuredFinancialYear, financialYearOptions } from "../lib/financialYear.js";
 import { accessForPath } from "../lib/permissionAccess.js";
 import { isAdminUser } from "../lib/adminVisibility.js";
 import { fetchTransactionParties, partyOptionLabel } from "../lib/partyDirectory.js";
@@ -11,7 +12,9 @@ const esc=v=>String(v??"").replaceAll('"','""');
 const PROFIT_SENSITIVE=/(profit|margin|trading|break-even|company health)/i;
 
 export default function LiveReportPage({page}){
-  const[fy,setFy]=useState(localStorage.getItem("financialYearSelected")||"2026-27");
+  const user=getUser();
+  const[fy,setFy]=useState(configuredFinancialYear(user));
+  const fyYears=financialYearOptions(user,{count:8,extra:[fy]});
   const[data,setData]=useState({rows:[],summary:{}});
   const[loading,setLoading]=useState(false);
   const[msg,setMsg]=useState("");
@@ -85,8 +88,8 @@ export default function LiveReportPage({page}){
     <section className="panel">
       <div className="toolbar">
         <label style={{fontSize:9,fontWeight:700}}>Financial Year
-          <select style={{marginLeft:8,padding:"8px 10px",border:"1px solid var(--line)",borderRadius:9}} value={fy} onChange={e=>{setFy(e.target.value);localStorage.setItem("financialYearSelected",e.target.value)}}>
-            {["2024-25","2025-26","2026-27","2027-28","2028-29"].map(x=><option key={x}>{x}</option>)}
+          <select style={{marginLeft:8,padding:"8px 10px",border:"1px solid var(--line)",borderRadius:9}} value={fy} onChange={e=>setFy(e.target.value)}>
+            {fyYears.map(x=><option key={x}>{x}</option>)}
           </select>
         </label>
         {isLedger&&<label className="ledgerPartySelector" style={{fontSize:9,fontWeight:700}}>Party

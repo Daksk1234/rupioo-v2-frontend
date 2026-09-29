@@ -27,6 +27,18 @@ import "../smart-ui.css";
 
 const MAX_DESKTOP_GROUPS = 7;
 const PERMISSION_EXEMPT_PATHS = new Set(["/profile", "/no-access", "/storage-settings", "/master/storage-connection"]);
+const SALES_WITH_PRODUCT_PATH = "/dms/list-of-sales-with-product";
+const SALES_INVOICE_PATH = "/dms/sales-invoices";
+
+function canViewPath(pageAccess = {}, path = "") {
+  if (pageAccess?.[path]?.view === true) return true;
+  // This report is a child view of Sales Invoices. Existing companies/plans
+  // should not need a new permission assignment just to make the menu visible.
+  if (path === SALES_WITH_PRODUCT_PATH) {
+    return pageAccess?.[SALES_INVOICE_PATH]?.view === true;
+  }
+  return false;
+}
 
 export default function AppShell({ children, appKey }) {
   const location = useLocation();
@@ -70,7 +82,7 @@ export default function AppShell({ children, appKey }) {
         // PAGE_PERMISSION_MAP entry.
         if (
           !PERMISSION_EXEMPT_PATHS.has(location.pathname) &&
-          fresh?.pageAccess?.[location.pathname]?.view !== true
+          !canViewPath(fresh?.pageAccess || {}, location.pathname)
         ) {
           navigate(fresh?.homePath || "/no-access", { replace: true });
         }
@@ -99,7 +111,7 @@ export default function AppShell({ children, appKey }) {
       .map((group) => ({
         ...group,
         items: (group.items || []).filter(
-          (item) => pageAccess[item.path]?.view === true
+          (item) => canViewPath(pageAccess, item.path)
         ),
       }))
       .filter((group) => group.items.length > 0);

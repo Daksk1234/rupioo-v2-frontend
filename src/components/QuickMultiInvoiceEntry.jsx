@@ -3,18 +3,12 @@ import { Plus, Save, Trash2, X } from "lucide-react";
 import PageHeader from "./PageHeader.jsx";
 import { api, getUser } from "../lib/api.js";
 import { fetchTransactionParties, partyGstin, partyOptionLabel } from "../lib/partyDirectory.js";
+import { configuredFinancialYear, financialYearFromDate, initialDateForFinancialYear } from "../lib/financialYear.js";
 
 const round2 = (value) => Number((Number(value) || 0).toFixed(2));
 const money = (value) => `₹${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => initialDateForFinancialYear(configuredFinancialYear(getUser()));
 const rowId = (prefix = "row") => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-
-const financialYearFromDate = (value) => {
-  const d = value ? new Date(`${value}T00:00:00`) : new Date();
-  if (Number.isNaN(d.getTime())) return "2026-27";
-  const year = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
-  return `${year}-${String((year + 1) % 100).padStart(2, "0")}`;
-};
 
 const newProductRow = () => ({
   id: rowId("product"),

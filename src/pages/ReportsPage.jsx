@@ -2,7 +2,8 @@ import React,{useEffect,useState} from "react";
 import { Printer,FileSpreadsheet,Search,Monitor } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import DataTable from "../components/DataTable.jsx";
-import { api } from "../lib/api.js";
+import { api, getUser } from "../lib/api.js";
+import { configuredFinancialYear } from "../lib/financialYear.js";
 import { accessForPath } from "../lib/permissionAccess.js";
 
 const esc=v=>String(v??"").replaceAll('"','""');
@@ -14,13 +15,14 @@ export default function ReportsPage(){
   const[data,setData]=useState(null);
   const[msg,setMsg]=useState("");
   const access=accessForPath("/dms/reports");
+  const fy=configuredFinancialYear(getUser());
 
   useEffect(()=>{api("/reports/catalog").then(setReports).catch(e=>setMsg(e.message))},[]);
   const list=reports.filter(r=>r.name.toLowerCase().includes(q.toLowerCase()));
 
   const run=async(r)=>{
     try{
-      const d=await api(`/reports/run?name=${encodeURIComponent(r.name)}&financialYear=${encodeURIComponent(localStorage.getItem("financialYearSelected")||"2026-27")}`);
+      const d=await api(`/reports/run?name=${encodeURIComponent(r.name)}&financialYear=${encodeURIComponent(fy)}`);
       setSelected(r);setData(d);return d;
     }catch(e){setMsg(e.message);return null}
   };

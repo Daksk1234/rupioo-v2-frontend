@@ -47,6 +47,17 @@ const blank = {
   mrp: 0,
   salePrice: 0,
   minStockAlert: 0,
+  purchaseAutomation: {
+    enabled: true,
+    trendOverride: "AUTO",
+    targetStock: 0,
+    safetyDays: 7,
+    leadDays: 7,
+    moq: 1,
+    orderMultiple: 1,
+    preferredSupplierGlobalId: "",
+    preferredSupplierName: "",
+  },
   minimumProfitPct: 3,
   barcode: "",
   barcodeSource: "",
@@ -272,6 +283,10 @@ export default function ProductPage() {
         ? {
             ...blank,
             ...row,
+            purchaseAutomation: {
+              ...blank.purchaseAutomation,
+              ...(row.purchaseAutomation || {}),
+            },
             basicUnit: row.basicUnit || row.unit || "PCS",
           }
         : { ...blank },
@@ -464,6 +479,17 @@ export default function ProductPage() {
         salePrice: Number(form.salePrice || form.mrp || 0),
         gstRate: Number(form.gstRate || 0),
         minStockAlert: Number(form.minStockAlert || 0),
+        purchaseAutomation: {
+          ...blank.purchaseAutomation,
+          ...(form.purchaseAutomation || {}),
+          enabled: form.purchaseAutomation?.enabled !== false,
+          trendOverride: form.purchaseAutomation?.trendOverride || "AUTO",
+          targetStock: Number(form.purchaseAutomation?.targetStock || 0),
+          safetyDays: Number(form.purchaseAutomation?.safetyDays ?? 7),
+          leadDays: Number(form.purchaseAutomation?.leadDays ?? 7),
+          moq: Math.max(1, Number(form.purchaseAutomation?.moq || 1)),
+          orderMultiple: Math.max(1, Number(form.purchaseAutomation?.orderMultiple || 1)),
+        },
         ...(admin ? { minimumProfitPct: Number(form.minimumProfitPct || 0) } : {}),
       };
 
@@ -965,7 +991,97 @@ export default function ProductPage() {
                               <label>Min Stock Alert<input type="number" value={row.minStockAlert ?? ""} onChange={(event) => updateBulkRow(index, "minStockAlert", event.target.value === "" ? "" : Number(event.target.value))} /></label>
                             </div>
 
-                            <div className="sectionLabel">3. Tax</div>
+                            <div className="sectionLabel">3. Purchase AI Automation</div>
+            <div className="formGrid">
+              <label>
+                Auto Purchase Trigger
+                <select
+                  value={form.purchaseAutomation?.enabled === false ? "OFF" : "ON"}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      purchaseAutomation: {
+                        ...blank.purchaseAutomation,
+                        ...(current.purchaseAutomation || {}),
+                        enabled: event.target.value === "ON",
+                      },
+                    }))
+                  }
+                >
+                  <option value="ON">Enabled</option>
+                  <option value="OFF">Disabled</option>
+                </select>
+                <small>When enabled, this product participates in AI stock-trigger purchasing.</small>
+              </label>
+              <label>
+                Trend Override
+                <select
+                  value={form.purchaseAutomation?.trendOverride || "AUTO"}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      purchaseAutomation: {
+                        ...blank.purchaseAutomation,
+                        ...(current.purchaseAutomation || {}),
+                        trendOverride: event.target.value,
+                      },
+                    }))
+                  }
+                >
+                  <option value="AUTO">AI Auto</option>
+                  <option value="HIGH">High — Trigger at 30%</option>
+                  <option value="MEDIUM">Medium — Trigger at 10%</option>
+                  <option value="LOW">Low — Trigger at 5%</option>
+                </select>
+                <small>AI Auto classifies by recent sales velocity; manual override stays available.</small>
+              </label>
+              <label>
+                Target / Full Stock
+                <input
+                  type="number"
+                  min="0"
+                  value={form.purchaseAutomation?.targetStock ?? 0}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      purchaseAutomation: { ...blank.purchaseAutomation, ...(current.purchaseAutomation || {}), targetStock: Number(event.target.value) },
+                    }))
+                  }
+                />
+                <small>0 = AI derives target from sales, lead time, safety days and Min Stock Alert.</small>
+              </label>
+              <label>
+                Supplier Lead Time (Days)
+                <input
+                  type="number" min="1" value={form.purchaseAutomation?.leadDays ?? 7}
+                  onChange={(event) => setForm((current) => ({ ...current, purchaseAutomation: { ...blank.purchaseAutomation, ...(current.purchaseAutomation || {}), leadDays: Number(event.target.value) } }))}
+                />
+              </label>
+              <label>
+                Safety Stock Days
+                <input
+                  type="number" min="0" value={form.purchaseAutomation?.safetyDays ?? 7}
+                  onChange={(event) => setForm((current) => ({ ...current, purchaseAutomation: { ...blank.purchaseAutomation, ...(current.purchaseAutomation || {}), safetyDays: Number(event.target.value) } }))}
+                />
+              </label>
+              <label>
+                MOQ
+                <input
+                  type="number" min="1" value={form.purchaseAutomation?.moq ?? 1}
+                  onChange={(event) => setForm((current) => ({ ...current, purchaseAutomation: { ...blank.purchaseAutomation, ...(current.purchaseAutomation || {}), moq: Number(event.target.value) } }))}
+                />
+              </label>
+              <label>
+                Order Multiple
+                <input
+                  type="number" min="1" value={form.purchaseAutomation?.orderMultiple ?? 1}
+                  onChange={(event) => setForm((current) => ({ ...current, purchaseAutomation: { ...blank.purchaseAutomation, ...(current.purchaseAutomation || {}), orderMultiple: Number(event.target.value) } }))}
+                />
+                <small>AI rounds suggested quantity to this purchasing/packing multiple.</small>
+              </label>
+            </div>
+
+            <div className="sectionLabel">4. Tax</div>
                             <div className="formGrid">
                               <label>HSN / SAC
                                 <div className="lookupSelectRow">
@@ -977,7 +1093,7 @@ export default function ProductPage() {
                               <label>GST Rate %<input type="number" min="0" max="100" step="0.01" value={row.gstRate ?? ""} onChange={(event) => updateBulkRow(index, "gstRate", event.target.value === "" ? "" : Number(event.target.value))} /></label>
                             </div>
 
-                            <div className="sectionLabel">4. Stock & Purchase Cost</div>
+                            <div className="sectionLabel">5. Stock & Purchase Cost</div>
                             <div className="formGrid">
                               <label>Opening Stock<input type="number" value={row.openingStock ?? ""} onChange={(event) => updateBulkRow(index, "openingStock", event.target.value === "" ? "" : Number(event.target.value))} /></label>
                               <label>Opening Rate<input type="number" step="0.01" value={row.openingRate ?? ""} onChange={(event) => updateBulkRow(index, "openingRate", event.target.value === "" ? "" : Number(event.target.value))} /></label>
@@ -987,7 +1103,7 @@ export default function ProductPage() {
                               <label>Current Stock<input type="number" value={row.currentStock ?? row.openingStock ?? 0} readOnly /></label>
                             </div>
 
-                            <div className="sectionLabel">5. {admin ? "Selling & Profit" : "Selling"}</div>
+                            <div className="sectionLabel">6. {admin ? "Selling & Profit" : "Selling"}</div>
                             <div className="formGrid">
                               <label>MRP<input type="number" step="0.01" value={row.mrp ?? ""} onChange={(event) => updateBulkRow(index, "mrp", event.target.value === "" ? "" : Number(event.target.value))} /></label>
                               <label>Default Sale Price<input type="number" step="0.01" value={row.salePrice ?? ""} onChange={(event) => updateBulkRow(index, "salePrice", event.target.value === "" ? "" : Number(event.target.value))} /></label>
@@ -1264,7 +1380,97 @@ export default function ProductPage() {
               </label>
             </div>
 
-            <div className="sectionLabel">3. Tax</div>
+            <div className="sectionLabel">3. Purchase AI Automation</div>
+            <div className="formGrid">
+              <label>
+                Auto Purchase Trigger
+                <select
+                  value={form.purchaseAutomation?.enabled === false ? "OFF" : "ON"}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      purchaseAutomation: {
+                        ...blank.purchaseAutomation,
+                        ...(current.purchaseAutomation || {}),
+                        enabled: event.target.value === "ON",
+                      },
+                    }))
+                  }
+                >
+                  <option value="ON">Enabled</option>
+                  <option value="OFF">Disabled</option>
+                </select>
+                <small>When enabled, this product participates in AI stock-trigger purchasing.</small>
+              </label>
+              <label>
+                Trend Override
+                <select
+                  value={form.purchaseAutomation?.trendOverride || "AUTO"}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      purchaseAutomation: {
+                        ...blank.purchaseAutomation,
+                        ...(current.purchaseAutomation || {}),
+                        trendOverride: event.target.value,
+                      },
+                    }))
+                  }
+                >
+                  <option value="AUTO">AI Auto</option>
+                  <option value="HIGH">High — Trigger at 30%</option>
+                  <option value="MEDIUM">Medium — Trigger at 10%</option>
+                  <option value="LOW">Low — Trigger at 5%</option>
+                </select>
+                <small>AI Auto classifies by recent sales velocity; manual override stays available.</small>
+              </label>
+              <label>
+                Target / Full Stock
+                <input
+                  type="number"
+                  min="0"
+                  value={form.purchaseAutomation?.targetStock ?? 0}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      purchaseAutomation: { ...blank.purchaseAutomation, ...(current.purchaseAutomation || {}), targetStock: Number(event.target.value) },
+                    }))
+                  }
+                />
+                <small>0 = AI derives target from sales, lead time, safety days and Min Stock Alert.</small>
+              </label>
+              <label>
+                Supplier Lead Time (Days)
+                <input
+                  type="number" min="1" value={form.purchaseAutomation?.leadDays ?? 7}
+                  onChange={(event) => setForm((current) => ({ ...current, purchaseAutomation: { ...blank.purchaseAutomation, ...(current.purchaseAutomation || {}), leadDays: Number(event.target.value) } }))}
+                />
+              </label>
+              <label>
+                Safety Stock Days
+                <input
+                  type="number" min="0" value={form.purchaseAutomation?.safetyDays ?? 7}
+                  onChange={(event) => setForm((current) => ({ ...current, purchaseAutomation: { ...blank.purchaseAutomation, ...(current.purchaseAutomation || {}), safetyDays: Number(event.target.value) } }))}
+                />
+              </label>
+              <label>
+                MOQ
+                <input
+                  type="number" min="1" value={form.purchaseAutomation?.moq ?? 1}
+                  onChange={(event) => setForm((current) => ({ ...current, purchaseAutomation: { ...blank.purchaseAutomation, ...(current.purchaseAutomation || {}), moq: Number(event.target.value) } }))}
+                />
+              </label>
+              <label>
+                Order Multiple
+                <input
+                  type="number" min="1" value={form.purchaseAutomation?.orderMultiple ?? 1}
+                  onChange={(event) => setForm((current) => ({ ...current, purchaseAutomation: { ...blank.purchaseAutomation, ...(current.purchaseAutomation || {}), orderMultiple: Number(event.target.value) } }))}
+                />
+                <small>AI rounds suggested quantity to this purchasing/packing multiple.</small>
+              </label>
+            </div>
+
+            <div className="sectionLabel">4. Tax</div>
             <div className="formGrid">
               <label className="hsnSmartField">
                 HSN / SAC
@@ -1332,7 +1538,7 @@ export default function ProductPage() {
               </label>
             </div>
 
-            <div className="sectionLabel">4. Stock & Purchase Cost</div>
+            <div className="sectionLabel">5. Stock & Purchase Cost</div>
             <div className="formGrid">
               <label>
                 Opening Stock
@@ -1391,13 +1597,24 @@ export default function ProductPage() {
                 Current Stock
                 <input
                   type="number"
-                  value={Number(form.currentStock ?? form.openingStock ?? 0)}
+                  value={Number(
+                    edit
+                      ? Number(edit.currentStock ?? edit.openingStock ?? 0) +
+                          (Number(form.openingStock || 0) - Number(edit.openingStock || 0))
+                      : form.currentStock ?? form.openingStock ?? 0,
+                  )}
                   readOnly
                 />
+                {edit && Number(form.openingStock || 0) !== Number(edit.openingStock || 0) && (
+                  <small>
+                    Opening Stock change will adjust Current Stock by {Number(form.openingStock || 0) - Number(edit.openingStock || 0) >= 0 ? "+" : ""}
+                    {Number(form.openingStock || 0) - Number(edit.openingStock || 0)} on save.
+                  </small>
+                )}
               </label>
             </div>
 
-            <div className="sectionLabel">5. {admin ? "Selling & Profit" : "Selling"}</div>
+            <div className="sectionLabel">6. {admin ? "Selling & Profit" : "Selling"}</div>
             <div className="formGrid">
               <label>
                 MRP

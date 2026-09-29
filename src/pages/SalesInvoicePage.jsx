@@ -14,6 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
+import SalesInvoiceLayout from "../components/SalesInvoiceLayout.jsx";
 import PageHeader from "../components/PageHeader.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import CreateLookupButton from "../components/CreateLookupButton.jsx";
@@ -22,6 +23,7 @@ import { api, apiBlob, getUser } from "../lib/api.js";
 import { fetchTransactionParties, partyOptionLabel, partyGstin } from "../lib/partyDirectory.js";
 import { buildInvoiceTaxSummary, computeInvoiceAdjustments } from "../lib/invoiceAdjustments.js";
 import { isAdminUser } from "../lib/adminVisibility.js";
+import { configuredFinancialYear, currentFinancialYear, financialYearFromDate, financialYearOptions, initialDateForFinancialYear } from "../lib/financialYear.js";
 
 const floor2 = (n) => Math.floor((Number(n) || 0) * 100) / 100;
 const ceil2 = (n) => Math.ceil((Number(n) || 0) * 100) / 100;
@@ -33,20 +35,10 @@ const ymd = (v) => {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? String(v).slice(0, 10) : d.toISOString().slice(0, 10);
 };
-const currentFY = () => {
-  const d = new Date();
-  const y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
-  return `${y}-${String((y + 1) % 100).padStart(2, "0")}`;
-};
+const currentFY = currentFinancialYear;
 const fyStart = (fy) => Number(String(fy || currentFY()).slice(0, 4)) || new Date().getFullYear();
 const fyLabel = (fy) => `FY ${String(fy || "").replace(/^FY\s*/i, "")}`;
-const buildFinancialYears = (count = 10) => {
-  const now = fyStart(currentFY());
-  return Array.from({ length: count }, (_, i) => {
-    const y = now - i;
-    return `${y}-${String((y + 1) % 100).padStart(2, "0")}`;
-  });
-};
+const buildFinancialYears = (count = 10) => financialYearOptions(getUser(), { count });
 const saleFromMRPByGrade = (mrp, pct) => floor2(Number(mrp || 0) / (1 + Number(pct || 0) / 100));
 const basicFromSaleGST = (sale, gst) => ceil2(Number(sale || 0) / (1 + Number(gst || 0) / 100));
 const saleFromBasicGST = (basic, gst) => round2(Number(basic || 0) * (1 + Number(gst || 0) / 100));
@@ -193,7 +185,8 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   const companyCity = String(sessionUser?.companyProfile?.city || "").trim();
   const [searchParams, setSearchParams] = useSearchParams();
   const editId = embedded ? "" : (searchParams.get("edit") || "");
-  const createMode = embedded ? true : (searchParams.get("create") === "1" || Boolean(editId));
+  const sourceOrderId = embedded ? "" : (searchParams.get("orderId") || "");
+  const createMode = embedded ? true : (searchParams.get("create") === "1" || Boolean(editId) || Boolean(sourceOrderId));
 
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -201,15 +194,20 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   const [invoices, setInvoices] = useState([]);
   const [customerId, setCustomerId] = useState("");
   const [rows, setRows] = useState([newRow()]);
+  // Keep the raw Basic Total text separate while a user is editing it.
+  // If we bind the input directly to the recalculated taxable amount, every
+  // keystroke rewrites the DOM value and moves the caret to the end.
+  const [basicTotalEdit, setBasicTotalEdit] = useState(null);
   const [adjustments, setAdjustments] = useState([]);
   const [adjustmentMasters, setAdjustmentMasters] = useState(() => readAdjustmentMasters());
   const [selectedAdjustmentMaster, setSelectedAdjustmentMaster] = useState({ Discount: "", Charges: "" });
   const [adjustmentMasterEditor, setAdjustmentMasterEditor] = useState(null);
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
-  const [fy, setFy] = useState(searchParams.get("financialYear") || currentFY());
+  const [fy, setFy] = useState(searchParams.get("financialYear") || configuredFinancialYear(sessionUser));
   const [listFy, setListFy] = useState("ALL");
   const [nextInvoiceNo, setNextInvoiceNo] = useState("");
+  const invoiceNoManuallyEditedRef = useRef(false);
   const [seriesMsg, setSeriesMsg] = useState("");
   const [customerFinancial, setCustomerFinancial] = useState({});
   const [editingOriginalGrand, setEditingOriginalGrand] = useState(0);
@@ -218,6 +216,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   const [deliveryProof, setDeliveryProof] = useState(null);
   const [biltyCopy, setBiltyCopy] = useState(null);
   const [deliverySaving, setDeliverySaving] = useState(false);
+  const [orderDraft, setOrderDraft] = useState(null);
 
   const [search, setSearch] = useState("");
   const [activeBucket, setActiveBucket] = useState("REGULAR");
@@ -246,7 +245,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
   const [header, setHeader] = useState({
     invoiceNo: "",
-    date: new Date().toISOString().slice(0, 10),
+    date: initialDateForFinancialYear(fy),
     orderNo: "",
     arn: "",
     noOfPackages: 0,
@@ -284,9 +283,10 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     setAdjustments([]);
     setCustomerFinancial({});
     setEditingOriginalGrand(0);
+    invoiceNoManuallyEditedRef.current = false;
     setHeader({
       invoiceNo: "",
-      date: new Date().toISOString().slice(0, 10),
+      date: initialDateForFinancialYear(fy),
       orderNo: "",
       arn: "",
       noOfPackages: 0,
@@ -302,7 +302,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     setCustomerId(invoice.customerGlobalId || "");
     setHeader({
       invoiceNo: invoice.invoiceNo || "",
-      date: invoice.date ? ymd(invoice.date) : new Date().toISOString().slice(0, 10),
+      date: invoice.date ? ymd(invoice.date) : initialDateForFinancialYear(fy),
       orderNo: invoice.orderNo || "",
       arn: invoice.arn || "",
       noOfPackages: Number(invoice.noOfPackages || 0),
@@ -351,6 +351,41 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     setEditingOriginalGrand(Number(invoice.grandTotal || 0));
   };
 
+  const hydrateOrderDraft = (draft, productList) => {
+    setOrderDraft(draft);
+    setCustomerId(draft.customerGlobalId || "");
+    setHeader((old) => ({
+      ...old,
+      orderNo: draft.orderNo || "",
+      noOfPackages: Number(draft.packageCount || 0),
+      remarks: old.remarks || `Generated from sales order ${draft.orderNo || ""}`,
+    }));
+    const hydrated = (draft.items || []).map((item) => {
+      const p = productList.find((product) => String(product._id) === String(item.productId));
+      const basicRate = Number(item.basicRate ?? item.rate ?? 0);
+      const gstRate = Number(item.gstRate ?? p?.gstRate ?? 0);
+      return recalc({
+        ...newRow(),
+        productId: String(item.productId || ""),
+        productName: p?.name || item.nameSnapshot || "",
+        hsnCode: p?.hsnCode || item.hsnCode || item.hsnSnapshot || "",
+        qty: Number(item.qty || 0),
+        availableQty: Number(p?.currentStock ?? p?.openingStock ?? item.qty ?? 0),
+        basicUnit: p?.basicUnit || item.unit || "PCS",
+        packingUnit: p?.packingUnitName || p?.packingUnit || item.packingUnit || "",
+        qtyInBag: Number(p?.qtyInBag || item.qtyInBag || 1),
+        mrp: Number(p?.mrp || 0),
+        gradeDiscountPct: Number(item.gradeDiscountPct || 0),
+        saleRate: saleFromBasicGST(basicRate, gstRate),
+        basicRate,
+        discountPct: Number(item.discountPct || 0),
+        gstRate,
+        landedCost: Number(p?.averagePurchaseRate || p?.averagePurchasePrice || p?.lastPurchasePrice || p?.openingRate || 0),
+      });
+    });
+    setRows(hydrated.length ? hydrated : [newRow()]);
+  };
+
   const load = async () => {
     setLoading(true);
     try {
@@ -381,18 +416,34 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         setHeader((h) => ({ ...h, warehouseId: h.warehouseId || String(warehouseList[0]._id) }));
       }
 
+      if (sourceOrderId && !editId) {
+        const draft = await api(`/sales-app/order-flow/orders/${encodeURIComponent(sourceOrderId)}/invoice-draft?financialYear=${encodeURIComponent(fy)}`);
+        hydrateOrderDraft(draft, productList);
+      } else if (!editId) {
+        setOrderDraft(null);
+      }
+
       if (editId) {
         const invoice = await api(`/transactions/sales-invoices/${editId}?financialYear=${encodeURIComponent(fy)}`);
         hydrateEdit(invoice, productList);
         setNextInvoiceNo(invoice.invoiceNo || "");
+        invoiceNoManuallyEditedRef.current = false;
         setSeriesMsg("");
       } else if (createMode) {
         try {
-          const n = await api(`/transactions/sales-invoices/next-number?financialYear=${encodeURIComponent(fy)}`);
-          setNextInvoiceNo(n.invoiceNo || "");
+          const invoiceNumberFy = financialYearFromDate(header.date) || fy;
+          const n = await api(`/transactions/sales-invoices/next-number?financialYear=${encodeURIComponent(invoiceNumberFy)}`);
+          const autoInvoiceNo = n.invoiceNo || "";
+          setNextInvoiceNo(autoInvoiceNo);
+          if (!invoiceNoManuallyEditedRef.current) {
+            setHeader((current) => ({ ...current, invoiceNo: autoInvoiceNo }));
+          }
           setSeriesMsg("");
         } catch (e) {
           setNextInvoiceNo("");
+          if (!invoiceNoManuallyEditedRef.current) {
+            setHeader((current) => ({ ...current, invoiceNo: "" }));
+          }
           setSeriesMsg(e.message);
         }
       }
@@ -406,14 +457,56 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fy, listFy, editId, createMode]);
+  }, [fy, listFy, editId, createMode, sourceOrderId]);
+
+  useEffect(() => {
+    let active = true;
+    if (!createMode || editId) return () => { active = false; };
+    const customerQuery = customerId ? `&customerGlobalId=${encodeURIComponent(customerId)}` : "";
+    const invoiceNumberFy = financialYearFromDate(header.date) || fy;
+    api(`/transactions/sales-invoices/next-number?financialYear=${encodeURIComponent(invoiceNumberFy)}${customerQuery}`)
+      .then((result) => {
+        if (!active) return;
+        const autoInvoiceNo = result?.invoiceNo || "";
+        setNextInvoiceNo(autoInvoiceNo);
+        if (!invoiceNoManuallyEditedRef.current) {
+          setHeader((current) => ({ ...current, invoiceNo: autoInvoiceNo }));
+        }
+        setSeriesMsg("");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setNextInvoiceNo("");
+        if (!invoiceNoManuallyEditedRef.current) {
+          setHeader((current) => ({ ...current, invoiceNo: "" }));
+        }
+        setSeriesMsg(error.message || "Could not generate invoice number");
+      });
+    return () => { active = false; };
+  }, [customerId, fy, header.date, createMode, editId]);
 
   const customer = customers.find((c) => c.globalCustomerId === customerId);
   const customerTransport = customer?.assignedTransportDetails || null;
   const customerGstin = partyGstin(customer);
   const customerDeliveryAddress = customer?.addresses?.find((a) => String(a?.type || "BILLING").toUpperCase() === "BILLING") || customer?.addresses?.[0] || {};
   const customerDeliveryCity = String(customerDeliveryAddress?.city || "").trim();
-  const transportRequiredForCustomer = Boolean(cityKey(companyCity) && cityKey(customerDeliveryCity) && cityKey(companyCity) !== cityKey(customerDeliveryCity));
+  // The system-managed CASH customer is intentionally transporter-free.
+  // Use the permanent system identity first; the name fallback is restricted
+  // to system-managed records so a normal customer named "Cash" is unaffected.
+  const isCashCustomer = Boolean(
+    customer && [
+      customer.systemKey,
+      customer.customerCode,
+      customer.displayIdentifier,
+      customer.localName,
+    ].some((value) => String(value || "").trim().toUpperCase() === "CASH")
+  );
+  const transportRequiredForCustomer = Boolean(
+    !isCashCustomer &&
+    cityKey(companyCity) &&
+    cityKey(customerDeliveryCity) &&
+    cityKey(companyCity) !== cityKey(customerDeliveryCity)
+  );
   const companyGstStateCode = companyGstin.match(/^\d{2}/)?.[0] || "";
   const customerGstStateCode = customerGstin.match(/^\d{2}/)?.[0] || "";
   const autoGstType = companyGstStateCode && customerGstStateCode
@@ -423,7 +516,13 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     () => new Map(customers.map((c) => [String(c.globalCustomerId || ""), c])),
     [customers],
   );
-  const setH = (k, v) => setHeader((h) => ({ ...h, [k]: v }));
+  const setH = (k, v) => {
+    setHeader((h) => ({ ...h, [k]: v }));
+    if (k === "date" && !editId) {
+      const dateFy = financialYearFromDate(v);
+      if (dateFy && dateFy !== fy) setFy(dateFy);
+    }
+  };
   const setEInvoice = (k, v) => setHeader((h) => ({
     ...h,
     eInvoice: { ...(h.eInvoice || {}), [k]: v },
@@ -483,6 +582,34 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   const changeGrossQty = (i, gross) => setRows((rs) => rs.map((r, x) => x === i ? recalc({ ...r, qty: round2(Number(gross || 0) * Number(r.qtyInBag || 1)) }) : r));
   const changeSaleRate = (i, sale) => setRows((rs) => rs.map((r, x) => x === i ? recalc({ ...r, saleRate: sale, basicRate: basicFromSaleGST(sale, r.gstRate) }) : r));
   const changeBasicRate = (i, basic) => setRows((rs) => rs.map((r, x) => x === i ? recalc({ ...r, basicRate: basic, saleRate: saleFromBasicGST(basic, r.gstRate) }) : r));
+  const changeBasicTotal = (i, total) => setRows((rs) => rs.map((r, x) => {
+    if (x !== i) return r;
+    const qty = Number(r.qty || 0);
+    const discountFactor = Math.max(0, 1 - Number(r.discountPct || 0) / 100);
+    const targetTotal = Math.max(0, Number(total || 0));
+    const basicRate = qty > 0 && discountFactor > 0
+      ? targetTotal / (qty * discountFactor)
+      : qty > 0 ? targetTotal / qty : 0;
+    const preciseBasicRate = Number(basicRate.toFixed(6));
+    return recalc({
+      ...r,
+      basicRate: preciseBasicRate,
+      saleRate: saleFromBasicGST(preciseBasicRate, r.gstRate),
+    });
+  }));
+  const beginBasicTotalEdit = (i, value) => {
+    setBasicTotalEdit({ index: i, value: String(value ?? "") });
+  };
+  const editBasicTotal = (i, value) => {
+    // Text + inputMode keeps normal caret/selection behaviour and also lets
+    // users temporarily type values such as "12." without React changing it.
+    if (value !== "" && !/^\d*(?:\.\d*)?$/.test(value)) return;
+    setBasicTotalEdit({ index: i, value });
+    changeBasicTotal(i, value === "" || value === "." ? 0 : Number(value));
+  };
+  const finishBasicTotalEdit = (i) => {
+    setBasicTotalEdit((current) => current?.index === i ? null : current);
+  };
 
   const mastersFor = (type) => adjustmentMasters.filter((x) => x.type === type && x.active !== false);
   const chooseAdjustmentMaster = (type, id) => {
@@ -598,6 +725,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
   const saveInvoice = async ({ stayOnCreate = embedded } = {}) => {
     setMsg("");
+    if (!String(header.invoiceNo || "").trim()) { setMsg("Invoice Number is required"); return false; }
     if (!customerId) { setMsg("Select a buyer / party"); return false; }
     if (!header.warehouseId) { setMsg("Warehouse is mandatory"); return false; }
     if (rows.some((r) => !r.productId || Number(r.qty || 0) <= 0)) { setMsg("Complete every product row"); return false; }
@@ -611,10 +739,18 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     }
     setLoading(true);
     try {
+      const postingFy = financialYearFromDate(header.date) || fy;
       const payload = {
         ...header,
-        invoiceNo: editId ? header.invoiceNo : nextInvoiceNo,
-        financialYear: fy,
+        invoiceNo: String(header.invoiceNo || "").trim(),
+        manualInvoiceNo: !editId && invoiceNoManuallyEditedRef.current,
+        financialYear: postingFy,
+        sourceFinancialYear: fy,
+        sourceOrderId: sourceOrderId || "",
+        billingMode: sourceOrderId ? "ORDER" : "DIRECT",
+        // The order lifecycle has already performed credit-control verification.
+        // Direct invoices continue through the normal invoice credit checks.
+        creditOverrideApproved: Boolean(sourceOrderId),
         customerGlobalId: customerId,
         billDiscount: totals.discountTotal,
         otherCharges: totals.chargesTotal,
@@ -636,7 +772,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       setMsg(`Sales Invoice ${inv.invoiceNo} ${editId ? "updated" : "posted"}`);
       resetCreate();
       await load();
-      if (!stayOnCreate) setSearchParams({ financialYear: fy });
+      if (!stayOnCreate) setSearchParams({ financialYear: postingFy });
       return true;
     } catch (e) {
       setMsg(e.message);
@@ -763,7 +899,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     if (groupedRows.length) {
       setMonthOpen((prev) => {
         const next = { ...prev };
-        groupedRows.forEach((g) => { if (next[g.key] === undefined) next[g.key] = true; });
+        groupedRows.forEach((g) => { if (next[g.key] === undefined) next[g.key] = false; });
         return next;
       });
     }
@@ -776,8 +912,9 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       igst: a.igst + t.igst, cgst: a.cgst + t.cgst, sgst: a.sgst + t.sgst,
       roundOff: a.roundOff + Number(r.roundOff || 0),
       grand: a.grand + Number(r.grandTotal || 0),
+      net: a.net + Number(r.netInvoiceAmount ?? (Number(r.grandTotal || 0) - Number(r.creditNoteAmount || 0))),
     };
-  }, { basic:0, igst:0, cgst:0, sgst:0, roundOff:0, grand:0 }), [periodFiltered]);
+  }, { basic:0, igst:0, cgst:0, sgst:0, roundOff:0, grand:0, net:0 }), [periodFiltered]);
 
   const openDelivery = (invoice) => {
     setDeliveryTarget(invoice);
@@ -882,7 +1019,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   if (!createMode) {
     return (
       <>
-        <PageHeader onAdd={openCreate} addLabel="Create Sales Invoice" actions />
+        <PageHeader onAdd={openCreate} addLabel="CREATE SALES INVOICE" actions />
         {msg && <div className={`resultBanner ${msg.includes("posted") || msg.includes("updated") || msg.includes("deleted") ? "good" : "bad"}`}>{msg}</div>}
 
         <section className="panel oldDmsSalesList">
@@ -907,18 +1044,18 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
           <div className="oldDmsTableWrap">
             <table className="oldDmsInvoiceListTable">
-              <thead><tr><th>#</th><th>Invoice</th><th>Status</th><th>Invoice No.</th><th>Date</th><th>Party Name</th><th>Party Limit</th><th>User Name</th><th>Basic Total</th><th>IGST</th><th>CGST</th><th>SGST</th><th>Round Off</th><th>Grand Total</th>{admin&&<th>Margin</th>}</tr></thead>
+              <thead><tr><th>#</th><th>Invoice</th><th>Status</th><th>Invoice No.</th><th>Date</th><th>Party Name</th><th>Party Limit</th><th>User Name</th><th>Basic Total</th><th>IGST</th><th>CGST</th><th>SGST</th><th>Round Off</th><th>Grand Total</th><th>CN Status</th><th>Net After CN</th>{admin&&<th>Margin</th>}</tr></thead>
               <tbody>
-                {!groupedRows.length && <tr><td colSpan={admin?15:14} className="oldDmsEmpty">No sales invoice found for this period.</td></tr>}
+                {!groupedRows.length && <tr><td colSpan={admin?17:16} className="oldDmsEmpty">No sales invoice found for this period.</td></tr>}
                 {groupedRows.map((group) => (
                   <React.Fragment key={group.key}>
                     <tr className="oldDmsMonthRow" onClick={() => setMonthOpen((p) => ({ ...p, [group.key]: !p[group.key] }))}>
-                      <td colSpan={admin?15:14}><span>{monthOpen[group.key] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<b>{group.label}</b><small>{group.rows.length} invoice{group.rows.length === 1 ? "" : "s"} • {money(group.rows.reduce((s, r) => s + Number(r.grandTotal || 0), 0))}</small></span></td>
+                      <td colSpan={admin?17:16}><span>{monthOpen[group.key] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<b>{group.label}</b><small>{group.rows.length} invoice{group.rows.length === 1 ? "" : "s"} • {money(group.rows.reduce((s, r) => s + Number(r.grandTotal || 0), 0))}</small></span></td>
                     </tr>
                     {monthOpen[group.key] && group.rows.map((r, idx) => (
                       <tr key={r._id}>
                         <td>{idx + 1}</td>
-                        <td><div className="invoiceRowActions"><button className="oldDmsEditBtn" onClick={() => openInvoicePdf(r)} title="View / Print Master Invoice"><FileText size={13}/></button><button className="oldDmsEditBtn" onClick={() => openInvoicePdf(r, true)} title="Download Master Invoice"><Download size={13}/></button><button className="oldDmsEditBtn" onClick={() => openInvoiceEdit(r)} title="Edit invoice"><Pencil size={13}/></button>{String(r.workflowStatus || "").toUpperCase() !== "DELIVERED" && <button className="oldDmsEditBtn deliverAction" onClick={() => openDelivery(r)} title="Mark delivered + email invoice"><PackageCheck size={13}/></button>}</div></td>
+                        <td><div className="invoiceRowActions"><button className="oldDmsEditBtn" onClick={() => openInvoicePdf(r)} title="View / Print Master Invoice"><FileText size={13}/></button><button className="oldDmsEditBtn" onClick={() => openInvoicePdf(r, true)} title="Download Master Invoice"><Download size={13}/></button><button className="oldDmsEditBtn" disabled={String(r.creditNoteStatus || "NONE").toUpperCase() !== "NONE"} onClick={() => openInvoiceEdit(r)} title={String(r.creditNoteStatus || "NONE").toUpperCase() !== "NONE" ? "Cancel issued Credit Note before editing this invoice" : "Edit invoice"}><Pencil size={13}/></button>{String(r.workflowStatus || "").toUpperCase() !== "DELIVERED" && <button className="oldDmsEditBtn deliverAction" onClick={() => openDelivery(r)} title="Mark delivered + email invoice"><PackageCheck size={13}/></button>}</div></td>
                         <td><StatusBadge value={r.workflowStatus || r.status || "POSTED"} /></td>
                         <td><button className="tableClickLink" onClick={() => openInvoicePdf(r)} title="View / Print Master Invoice">{r.invoiceNo || "—"}</button></td>
                         <td>{ymd(r.date || r.createdAt)}</td>
@@ -931,13 +1068,15 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
                         <td>{money(getInvoiceTaxSplit(r).sgst)}</td>
                         <td>{money(r.roundOff || 0)}</td>
                         <td><b>{money(r.grandTotal)}</b></td>
+                        <td><StatusBadge value={r.creditNoteStatus || "NONE"} /></td>
+                        <td><b>{money(r.netInvoiceAmount ?? (Number(r.grandTotal || 0) - Number(r.creditNoteAmount || 0)))}</b>{Number(r.creditNoteAmount || 0) > 0 && <small style={{display:"block"}}>CN {money(r.creditNoteAmount)}</small>}</td>
                         {admin&&<td>{Number(r.grossMarginPct || 0).toFixed(1)}%</td>}
                       </tr>
                     ))}
                   </React.Fragment>
                 ))}
               </tbody>
-              <tfoot><tr><td colSpan="8">TOTAL</td><td>{money(listTotals.basic)}</td><td>{money(listTotals.igst)}</td><td>{money(listTotals.cgst)}</td><td>{money(listTotals.sgst)}</td><td>{money(listTotals.roundOff)}</td><td>{money(listTotals.grand)}</td>{admin&&<td />}</tr></tfoot>
+              <tfoot><tr><td colSpan="8">TOTAL</td><td>{money(listTotals.basic)}</td><td>{money(listTotals.igst)}</td><td>{money(listTotals.cgst)}</td><td>{money(listTotals.sgst)}</td><td>{money(listTotals.roundOff)}</td><td>{money(listTotals.grand)}</td><td></td><td>{money(listTotals.net)}</td>{admin&&<td />}</tr></tfoot>
             </table>
           </div>
         </section>
@@ -981,9 +1120,10 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       {msg && <div className={`resultBanner ${msg.includes("posted") || msg.includes("updated") || msg.includes("deleted") ? "good" : "bad"}`}>{msg}</div>}
       {seriesMsg && !editId && <div className="resultBanner bad">{seriesMsg}</div>}
 
-      <section className="panel oldDmsInvoiceComposer">
+      <SalesInvoiceLayout>
+      <section className="panel oldDmsInvoiceComposer salesInvoiceFullWidth">
         <div className="oldDmsCreateHead">
-          <div><b>{editId ? `EDIT SALES INVOICE ${header.invoiceNo || ""}` : "CREATE SALES INVOICE"}</b><small>{fyLabel(fy)}</small></div>
+          <div><b>{editId ? `EDIT SALES INVOICE ${header.invoiceNo || ""}` : sourceOrderId ? `ORDER INVOICE • ${orderDraft?.orderNo || header.orderNo || ""}` : "CREATE SALES INVOICE"}</b><small>{fyLabel(fy)}</small></div>
           <div>
             {editId && <button className="oldDmsDeleteBtn" disabled={loading} onClick={deleteInvoice} title="Delete Invoice"><Trash2 size={15} /></button>}
             {embedded ? (onRemoveInvoice && <button className="oldDmsCloseBtn" onClick={onRemoveInvoice} title="Remove this invoice"><X size={17} /></button>) : <button className="oldDmsCloseBtn" onClick={backToList} title="Back to Sales Invoice List"><X size={17} /></button>}
@@ -991,40 +1131,40 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         </div>
 
         <div className="oldDmsTopLine">
-          <label className="od-wide"><span>Buyer / Party *</span><div className="lookupSelectRow"><select value={customerId} disabled={Boolean(editId)} onChange={(e) => setCustomerId(e.target.value)}><option value="">Select Buyer / Party</option>{customers.map((c) => <option key={c.globalCustomerId} value={c.globalCustomerId}>{partyOptionLabel(c)}{c.gradeCode ? ` • Grade ${c.gradeCode}` : ""}</option>)}</select><CreateLookupButton to="/dms/customers" label="Create" resource="customer" selectedValue={customerId} onReturn={load} /></div></label>
-          <label><span>Order Date *</span><input type="date" value={header.date} onChange={(e) => setH("date", e.target.value)} /></label>
-          <label><span>Invoice Number *</span><input value={editId ? header.invoiceNo : nextInvoiceNo} readOnly placeholder="Auto" /></label>
-          <label className="od-warehouse"><span>Warehouse *</span><select value={header.warehouseId || ""} onChange={(e) => setH("warehouseId", e.target.value)}><option value="">Select Warehouse</option>{warehouses.map((w) => <option key={w._id} value={w._id}>{w.title || w.reference || "Warehouse"}</option>)}</select></label>
-          {totals.grand > 49999 && <label><span>ARN Number *</span><input value={header.arn} onChange={(e) => setH("arn", e.target.value)} /></label>}
+          <label data-invoice-field="buyer" className="od-wide"><span>Buyer / Party *</span><div className="lookupSelectRow"><select value={customerId} onChange={(e) => setCustomerId(e.target.value)}><option value="">Select Buyer / Party</option>{customers.map((c) => <option key={c.globalCustomerId} value={c.globalCustomerId}>{partyOptionLabel(c)}{c.gradeCode ? ` • Grade ${c.gradeCode}` : ""}</option>)}</select><CreateLookupButton to="/dms/customers" label="Create" resource="customer" selectedValue={customerId} onReturn={load} /></div></label>
+          <label data-invoice-field="date"><span>Order Date *</span><input type="date" value={header.date} onChange={(e) => setH("date", e.target.value)} /></label>
+          <label data-invoice-field="invoice" className="od-wide"><span>Invoice Number *</span><input value={header.invoiceNo} onChange={(e) => { if (!editId) invoiceNoManuallyEditedRef.current = true; setH("invoiceNo", e.target.value); }} placeholder={nextInvoiceNo || "Invoice Number"} autoComplete="off" /></label>
+          <label data-invoice-field="warehouse" className="od-warehouse"><span>Warehouse *</span><select value={header.warehouseId || ""} onChange={(e) => setH("warehouseId", e.target.value)}><option value="">Select Warehouse</option>{warehouses.map((w) => <option key={w._id} value={w._id}>{w.title || w.reference || "Warehouse"}</option>)}</select></label>
+          {totals.grand > 49999 && <label data-invoice-field="arn"><span>ARN Number *</span><input value={header.arn} onChange={(e) => setH("arn", e.target.value)} /></label>}
 
           {customer && credit.sanctioned > 0 ? (
             <>
-              <label><span>Sanction Amount</span><input readOnly value={credit.sanctioned.toFixed(2)} /><small>Ledger B: {credit.outstanding.toFixed(2)}</small></label>
-              <label><span>Pending Amount</span><input readOnly value={credit.pending.toFixed(2)} /><small>Pending Sales</small></label>
-              <label><span>Balance Amount</span><input readOnly value={credit.balance.toFixed(2)} /></label>
-              <label className={credit.net < 0 ? "od-net bad" : "od-net good"}><span>Net Balance</span><input readOnly value={credit.net.toFixed(2)} /></label>
+              <label data-invoice-field="sanction"><span>Sanction Amount</span><input readOnly value={credit.sanctioned.toFixed(2)} /><small>Ledger B: {credit.outstanding.toFixed(2)}</small></label>
+              <label data-invoice-field="pending"><span>Pending Amount</span><input readOnly value={credit.pending.toFixed(2)} /><small>Pending Sales</small></label>
+              <label data-invoice-field="balance"><span>Balance Amount</span><input readOnly value={credit.balance.toFixed(2)} /></label>
+              <label data-invoice-field="net" className={credit.net < 0 ? "od-net bad" : "od-net good"}><span>Net Balance</span><input readOnly value={credit.net.toFixed(2)} /></label>
             </>
-          ) : customer ? <label><span>Payment Mode *</span><input readOnly value={customer.paymentType || "CASH"} /></label> : null}
-          {customer && transportRequiredForCustomer && <label className="od-wide"><span>Assigned Transport</span><input readOnly value={customerTransport?.transporter?.name || "Assign in Customer Master"}/><small>{companyCity} → {customerDeliveryCity || "Customer City"} • {customerTransport?.deliveryStation?.name || customer.serviceArea || "Delivery station required"}{customerTransport?.deliveryStation?.pincode?` • ${customerTransport.deliveryStation.pincode}`:""}</small></label>}
+          ) : customer ? <label data-invoice-field="payment"><span>Payment Mode *</span><input readOnly value={customer.paymentType || "CASH"} /></label> : null}
+          {customer && transportRequiredForCustomer && <label data-invoice-field="transport" className="od-wide"><span>Assigned Transport</span><input readOnly value={customerTransport?.transporter?.name || "Assign in Customer Master"}/><small>{companyCity} → {customerDeliveryCity || "Customer City"} • {customerTransport?.deliveryStation?.name || customer.serviceArea || "Delivery station required"}{customerTransport?.deliveryStation?.pincode?` • ${customerTransport.deliveryStation.pincode}`:""}</small></label>}
         </div>
 
         <div className="oldDmsProductArea">
           {rows.map((r, i) => (
             <div className={`oldDmsProductRow ${billingErrorMap.has(i) ? "od-row-error" : ""}`} key={i}>
-              <label className="od-product"><span>Product *</span><div className="lookupSelectRow"><select value={r.productId} onChange={(e) => selectProduct(i, e.target.value)}><option value="">Select Product</option>{products.map((p) => <option key={p._id} value={p._id}>{p.name}</option>)}</select><CreateLookupButton to="/dms/products" label="Create" resource="product" selectedValue={r.productId} onReturn={load} /></div></label>
-              <label><span>HSN</span><input readOnly value={r.hsnCode || ""} /></label>
-              <label><span>Gross Unit</span><input readOnly value={r.packingUnit || r.basicUnit || ""} /></label>
-              <label><span>Gross Qty</span><input type="number" step="any" value={r.grossQty || 0} onChange={(e) => changeGrossQty(i, Number(e.target.value))} /></label>
-              <label className={r.qtyError ? "od-error" : ""}><span>Avail *</span><input readOnly value={r.availableQty || 0} />{r.qtyError && <small>{r.qtyError}</small>}</label>
-              <label className={r.qtyError ? "od-error" : ""}><span>Net Qty *</span><input type="number" min="0" value={r.qty} onChange={(e) => changeRow(i, "qty", Number(e.target.value))} /></label>
-              <label><span>Unit</span><input readOnly value={r.basicUnit || ""} /></label>
-              <label><span>MRP</span><input readOnly value={Number(r.mrp || 0).toFixed(3)} /></label>
-              <label><span>Grade %</span><input readOnly value={r.gradeDiscountPct || 0} /></label>
-              <label><span>Sale ₹ incl GST</span><input type="number" step="0.01" value={r.saleRate || 0} onChange={(e) => changeSaleRate(i, Number(e.target.value))} /></label>
-              <label className={billingErrorMap.has(i) ? "od-error" : ""}><span>Basic ₹ ex GST</span><input type="number" step="0.01" value={r.basicRate || 0} onChange={(e) => changeBasicRate(i, Number(e.target.value))} />{billingErrorMap.has(i) && <small>{billingErrorMap.get(i)}</small>}</label>
-              <label><span>Disc %</span><input type="number" step="0.01" value={r.discountPct || 0} onChange={(e) => changeRow(i, "discountPct", Number(e.target.value))} /></label>
-              <label><span>GST %</span><input readOnly value={r.gstRate || 0} /></label>
-              <label><span>Total</span><input readOnly value={Number(r.taxable || 0).toFixed(2)} /></label>
+              <label data-invoice-field="product" className="od-product"><span>Product *</span><div className="lookupSelectRow"><select value={r.productId} onChange={(e) => selectProduct(i, e.target.value)}><option value="">Select Product</option>{products.map((p) => <option key={p._id} value={p._id}>{p.name}</option>)}</select><CreateLookupButton to="/dms/products" label="Create" resource="product" selectedValue={r.productId} onReturn={load} /></div></label>
+              <label data-invoice-field="hsn"><span>HSN</span><input readOnly value={r.hsnCode || ""} /></label>
+              <label data-invoice-field="grossUnit"><span>Gross Unit</span><input readOnly value={r.packingUnit || r.basicUnit || ""} /></label>
+              <label data-invoice-field="grossQty"><span>Gross Qty</span><input type="number" step="any" value={r.grossQty || 0} onChange={(e) => changeGrossQty(i, Number(e.target.value))} /></label>
+              <label data-invoice-field="available" className={r.qtyError ? "od-error" : ""}><span>Avail *</span><input readOnly value={r.availableQty || 0} />{r.qtyError && <small>{r.qtyError}</small>}</label>
+              <label data-invoice-field="netQty" className={r.qtyError ? "od-error" : ""}><span>Net Qty *</span><input type="number" min="0" value={r.qty} onChange={(e) => changeRow(i, "qty", Number(e.target.value))} /></label>
+              <label data-invoice-field="unit"><span>Unit</span><input readOnly value={r.basicUnit || ""} /></label>
+              <label data-invoice-field="mrp"><span>MRP</span><input readOnly value={Number(r.mrp || 0).toFixed(3)} /></label>
+              <label data-invoice-field="grade"><span>Grade %</span><input readOnly value={r.gradeDiscountPct || 0} /></label>
+              <label data-invoice-field="sale"><span>Sale ₹ incl GST</span><input type="number" step="0.01" value={r.saleRate || 0} onChange={(e) => changeSaleRate(i, Number(e.target.value))} /></label>
+              <label data-invoice-field="basic" className={billingErrorMap.has(i) ? "od-error" : ""}><span>Basic ₹ ex GST</span><input type="number" step="0.01" value={r.basicRate || 0} onChange={(e) => changeBasicRate(i, Number(e.target.value))} />{billingErrorMap.has(i) && <small>{billingErrorMap.get(i)}</small>}</label>
+              <label data-invoice-field="discount"><span>Disc %</span><input type="number" step="0.01" value={r.discountPct || 0} onChange={(e) => changeRow(i, "discountPct", Number(e.target.value))} /></label>
+              <label data-invoice-field="gst"><span>GST %</span><input readOnly value={r.gstRate || 0} /></label>
+              <label data-invoice-field="total"><span>Basic Total</span><input type="text" inputMode="decimal" value={basicTotalEdit?.index === i ? basicTotalEdit.value : String(r.taxable ?? "")} onFocus={(e) => beginBasicTotalEdit(i, e.currentTarget.value)} onChange={(e) => editBasicTotal(i, e.target.value)} onBlur={() => finishBasicTotalEdit(i)} aria-label="Basic Total" /></label>
               <button className="oldDmsRemoveBtn" disabled={rows.length === 1} onClick={() => setRows((rs) => rs.filter((_, x) => x !== i))} title="Remove Product"><Trash2 size={14} /></button>
             </div>
           ))}
@@ -1071,19 +1211,19 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         <div className="oldDmsInvoiceFoot">
           <div className="oldDmsHsnBlock">
             <div className="oldDmsMiniFields">
-              <label><span>GST Type</span>{autoGstType?<><input readOnly value={header.gstType==="IGST"?"IGST":"CGST + SGST"}/><small>Auto from GST state code</small></>:<select value={header.gstType} onChange={(e) => setH("gstType", e.target.value)}><option value="CGST_SGST">CGST + SGST</option><option value="IGST">IGST</option></select>}</label>
-              <label><span>Order No.</span><input value={header.orderNo} onChange={(e) => setH("orderNo", e.target.value)} /></label>
-              <label><span>Packages</span><input type="number" value={header.noOfPackages} onChange={(e) => setH("noOfPackages", Number(e.target.value))} /></label>
-              <label><span>Delivery Boy</span><input value={header.deliveryBoy} onChange={(e) => setH("deliveryBoy", e.target.value)} /></label>
-              <label className="od-remarks"><span>Remarks</span><input value={header.remarks} onChange={(e) => setH("remarks", e.target.value)} /></label>
+              <label data-invoice-field="gstType"><span>GST Type</span>{autoGstType?<><input readOnly value={header.gstType==="IGST"?"IGST":"CGST + SGST"}/><small>Auto from GST state code</small></>:<select value={header.gstType} onChange={(e) => setH("gstType", e.target.value)}><option value="CGST_SGST">CGST + SGST</option><option value="IGST">IGST</option></select>}</label>
+              <label data-invoice-field="order"><span>Order No.</span><input value={header.orderNo} readOnly={Boolean(sourceOrderId)} onChange={(e) => setH("orderNo", e.target.value)} /></label>
+              <label data-invoice-field="packages"><span>Packages</span><input type="number" value={header.noOfPackages} onChange={(e) => setH("noOfPackages", Number(e.target.value))} /></label>
+              <label data-invoice-field="delivery"><span>Delivery Boy</span><input value={header.deliveryBoy} onChange={(e) => setH("deliveryBoy", e.target.value)} /></label>
+              <label data-invoice-field="remarks" className="od-remarks"><span>Remarks</span><input value={header.remarks} onChange={(e) => setH("remarks", e.target.value)} /></label>
             </div>
 
             <div className="oldDmsMiniFields oldDmsEinvoiceFields">
-              <label><span>GST e-Invoice Status</span><select value={header.eInvoice?.status || "NOT_GENERATED"} onChange={(e) => setEInvoice("status", e.target.value)}><option value="NOT_GENERATED">Not Generated</option><option value="PENDING">Pending</option><option value="GENERATED">Generated</option><option value="CANCELLED">Cancelled</option></select></label>
-              <label className="od-wide"><span>IRN</span><input value={header.eInvoice?.irn || ""} onChange={(e) => setEInvoice("irn", e.target.value)} placeholder="64-character Invoice Reference Number" /></label>
-              <label><span>Ack No.</span><input value={header.eInvoice?.ackNo || ""} onChange={(e) => setEInvoice("ackNo", e.target.value)} /></label>
-              <label><span>Ack Date</span><input type="date" value={header.eInvoice?.ackDate || ""} onChange={(e) => setEInvoice("ackDate", e.target.value)} /></label>
-              <label className="od-wide"><span>Signed QR Payload</span><textarea rows="2" value={header.eInvoice?.signedQrPayload || ""} onChange={(e) => setEInvoice("signedQrPayload", e.target.value)} placeholder="Paste IRP signed QR payload; later GST API will auto-fill this" /></label>
+              <label data-invoice-field="eStatus"><span>GST e-Invoice Status</span><select value={header.eInvoice?.status || "NOT_GENERATED"} onChange={(e) => setEInvoice("status", e.target.value)}><option value="NOT_GENERATED">Not Generated</option><option value="PENDING">Pending</option><option value="GENERATED">Generated</option><option value="CANCELLED">Cancelled</option></select></label>
+              <label data-invoice-field="irn" className="od-wide"><span>IRN</span><input value={header.eInvoice?.irn || ""} onChange={(e) => setEInvoice("irn", e.target.value)} placeholder="64-character Invoice Reference Number" /></label>
+              <label data-invoice-field="ack"><span>Ack No.</span><input value={header.eInvoice?.ackNo || ""} onChange={(e) => setEInvoice("ackNo", e.target.value)} /></label>
+              <label data-invoice-field="ackDate"><span>Ack Date</span><input type="date" value={header.eInvoice?.ackDate || ""} onChange={(e) => setEInvoice("ackDate", e.target.value)} /></label>
+              <label data-invoice-field="qr" className="od-wide"><span>Signed QR Payload</span><textarea rows="2" value={header.eInvoice?.signedQrPayload || ""} onChange={(e) => setEInvoice("signedQrPayload", e.target.value)} placeholder="Paste IRP signed QR payload; later GST API will auto-fill this" /></label>
             </div>
 
             {!!hsnSummary.length && <div className="oldDmsHsnWrap"><table><thead><tr><th>HSN</th><th>Taxable Value</th><th>Rate</th>{header.gstType === "IGST" ? <th>IGST</th> : <><th>CGST</th><th>SGST</th></>}<th>Total</th></tr></thead><tbody>{hsnSummary.map((h) => <tr key={`${h.hsn}-${h.rate}`}><td>{h.hsn}</td><td>{money(h.taxable)}</td><td>{h.rate}%</td>{header.gstType === "IGST" ? <td>{money(h.igst)}</td> : <><td>{money(h.cgst)}</td><td>{money(h.sgst)}</td></>}<td>{money(h.total)}</td></tr>)}<tr className="od-hsn-total"><td>TOTAL (Pre-Round)</td><td>{money(totals.taxable)}</td><td></td>{header.gstType === "IGST" ? <td>{money(totals.tax)}</td> : <><td>{money(totals.tax / 2)}</td><td>{money(totals.tax / 2)}</td></>}<td>{money(totals.taxable + totals.tax)}</td></tr><tr><td colSpan={header.gstType === "IGST" ? 4 : 5}>ROUND OFF</td><td>{money(totals.roundOff)}</td></tr><tr className="od-hsn-grand"><td colSpan={header.gstType === "IGST" ? 4 : 5}>GRAND TOTAL</td><td>{money(totals.grand)}</td></tr></tbody></table></div>}
@@ -1097,11 +1237,12 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
             {header.gstType === "IGST" ? <div><span>IGST</span><b>{money(totals.tax)}</b></div> : <><div><span>CGST</span><b>{money(totals.tax / 2)}</b></div><div><span>SGST</span><b>{money(totals.tax / 2)}</b></div></>}
             <div><span>Round Off</span><b>{money(totals.roundOff)}</b></div>
             <div className="grand"><span>Grand Total</span><b>{money(totals.grand)}</b></div>
-            {!(embedded || batchMode) && <button className="oldDmsSubmitBtn" disabled={loading || !customerId || (!editId && !nextInvoiceNo)} onClick={() => saveInvoice()}>{loading ? "Saving..." : editId ? "Update Sales Invoice" : "Create Sales Invoice"}</button>}
+            {!(embedded || batchMode) && <button className="oldDmsSubmitBtn" disabled={loading || !customerId || !String(header.invoiceNo || "").trim()} onClick={() => saveInvoice()}>{loading ? "Saving..." : editId ? "Update Sales Invoice" : "Create Sales Invoice"}</button>}
             {(embedded || batchMode) && <div className="oldDmsEmpty">This invoice will be posted with <b>Submit All Invoices</b>.</div>}
           </div>
         </div>
       </section>
+      </SalesInvoiceLayout>
     </>
   );
 

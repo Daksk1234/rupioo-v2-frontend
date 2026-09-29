@@ -22,6 +22,7 @@ import {
 import DataTable from "../components/DataTable.jsx";
 import SuperadminDetailsPanel from "../components/SuperadminDetailsPanel.jsx";
 import { api } from "../lib/api.js";
+import { bankDetailsFromIfsc, fetchGstCompany, fetchIfscCompany, fetchPincodeCompany, gstCompanyFields, pincodeCompanyFields } from "../lib/companyLookup.js";
 import "../superadmin-page.css";
 
 const COMPANY_TYPES = [
@@ -115,8 +116,11 @@ const initialForm = () => ({
   companyType: "",
   address: "",
   pincode: "",
+  area: "",
   city: "",
+  district: "",
   state: "",
+  bankDetails: { ifsc:"", bankName:"", branchName:"", branchArea:"", bankAddress:"", city:"", state:"", stdCode:"", phone:"", contactNo:"", accountNumber:"", accountName:"" },
   email: "",
   password: "",
   financialYear: currentFinancialYear(),
@@ -174,6 +178,7 @@ export default function SuperadminPage() {
   const [loading, setLoading] = useState(false);
   const [gstLoading, setGstLoading] = useState(false);
   const [pinLoading, setPinLoading] = useState(false);
+  const [ifscLoading, setIfscLoading] = useState(false);
   const [paying, setPaying] = useState(false);
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState("");
@@ -273,6 +278,7 @@ export default function SuperadminPage() {
           ? [{ ...current.stakeholders[0], pan }]
           : current.stakeholders,
     }));
+    if (gstin.length === 15) lookupGst(gstin);
   };
 
   const useAutomaticPassword = () => {
@@ -280,62 +286,59 @@ export default function SuperadminPage() {
     setForm((current) => ({ ...current, password: passwordFromGstin(current.gstin) }));
   };
 
-  const lookupPincode = async (pin = form.pincode) => {
-    const value = String(pin || "").replace(/\D/g, "").slice(0, 6);
+  const lookupPincode = async (pinValue = form.pincode) => {
+    const value = String(pinValue || "").replace(/\D/g, "").slice(0, 6);
     if (value.length !== 6) return;
-
     setPinLoading(true);
     try {
-      const result = await api(`/reference/pincodes?q=${encodeURIComponent(value)}`);
-      const rows = itemsOf(result);
-      const match = rows.find((row) => String(row.pincode) === value) || rows[0];
-      if (match) {
-        setForm((current) => ({
-          ...current,
-          pincode: value,
-          city: match.city || match.district || current.city,
-          state: match.state || current.state,
-        }));
-      }
-    } catch {
-      // Pincode enrichment is helpful but should not block company registration.
+      const row = await fetchPincodeCompany(value);
+      setForm((current) => pincodeCompanyFields(row, current));
+    } catch (error) {
+      notify(error.message, "bad");
     } finally {
       setPinLoading(false);
     }
   };
 
-  const lookupGst = async () => {
-    if (form.gstin.length !== 15) {
-      notify("Enter a complete 15-character GST Number", "bad");
-      return;
-    }
+  const changePincode = (raw) => {
+    const pincode = String(raw || "").replace(/\D/g, "").slice(0,6);
+    setForm((current) => ({ ...current, pincode }));
+    if (pincode.length === 6) lookupPincode(pincode);
+  };
 
+  const changeIfsc = (raw) => {
+    const ifsc = String(raw || "").toUpperCase().replace(/\s+/g, "").slice(0,11);
+    setForm((current) => ({ ...current, bankDetails:{ ...(current.bankDetails||{}), ifsc } }));
+    if (ifsc.length === 11) lookupIfsc(ifsc);
+  };
+
+  const lookupIfsc = async (ifscValue = form.bankDetails?.ifsc) => {
+    const ifsc = String(ifscValue || "").toUpperCase().replace(/\s+/g, "").slice(0,11);
+    if (ifsc.length !== 11) return;
+    setIfscLoading(true);
+    try {
+      const row = await fetchIfscCompany(ifsc);
+      setForm((current) => ({ ...current, bankDetails:bankDetailsFromIfsc(row, current.bankDetails||{}) }));
+    } catch (error) {
+      notify(error.message, "bad");
+    } finally {
+      setIfscLoading(false);
+    }
+  };
+
+  const lookupGst = async (gstinValue = form.gstin) => {
+    const gstin = gstinClean(gstinValue);
+    if (gstin.length !== 15) return;
     setGstLoading(true);
     try {
-      const taxpayer = await api(`/reference/gst/search?gstin=${encodeURIComponent(form.gstin)}`);
+      const taxpayer = await fetchGstCompany(gstin);
       const rawAddress = taxpayer?.principalAddressRaw || {};
       const pin = String(rawAddress.pncd || rawAddress.pincode || "").replace(/\D/g, "").slice(0, 6);
-
-      setForm((current) => ({
-        ...current,
-        companyName: taxpayer.legalName || taxpayer.tradeName || current.companyName,
-        tradeName: taxpayer.tradeName || current.tradeName,
-        pan: taxpayer.pan || panFromGstin(current.gstin),
-        address: taxpayer.principalAddress || current.address,
-        pincode: pin || current.pincode,
-        city: rawAddress.city || rawAddress.loc || rawAddress.dst || current.city,
-        state: rawAddress.state || rawAddress.stcd || current.state,
-        gstVerified: true,
-        gstSource: taxpayer.source || "GST_PROVIDER",
-        gstStatus: taxpayer.status || "",
-        gstTaxpayerType: taxpayer.taxpayerType || "",
-        gstConstitution: taxpayer.constitution || "",
-      }));
-
+      setForm((current) => ({ ...gstCompanyFields(taxpayer, current), gstin }));
       if (pin) await lookupPincode(pin);
       notify("GST details fetched successfully");
     } catch (error) {
-      notify(`${error.message}. You can still enter the company details manually.`, "bad");
+      notify(error.message, "bad");
     } finally {
       setGstLoading(false);
     }
@@ -636,13 +639,9 @@ export default function SuperadminPage() {
                     <input
                       value={form.gstin}
                       onChange={(event) => changeGstin(event.target.value)}
-                      onBlur={() => form.gstin.length === 15 && lookupGst()}
                       placeholder="15-character GSTIN"
                     />
-                    <button type="button" onClick={lookupGst} disabled={gstLoading || form.gstin.length !== 15}>
-                      {gstLoading ? <Loader2 className="spin" size={15} /> : <Search size={15} />}
-                      Fetch GST
-                    </button>
+                    {gstLoading && <Loader2 className="spin" size={15} />}
                   </div>
                   {form.gstVerified && (
                     <small className="saGoodText">
@@ -715,25 +714,27 @@ export default function SuperadminPage() {
                     <MapPin size={15} />
                     <input
                       value={form.pincode}
-                      onChange={(event) =>
-                        setForm({ ...form, pincode: event.target.value.replace(/\D/g, "").slice(0, 6) })
-                      }
-                      onBlur={() => lookupPincode()}
+                      onChange={(event) => changePincode(event.target.value)}
                       placeholder="6-digit PIN"
                     />
                     {pinLoading && <Loader2 className="spin" size={14} />}
                   </div>
                 </label>
 
-                <label>
-                  <span>City</span>
-                  <input value={form.city} onChange={(event) => setForm({ ...form, city: event.target.value })} />
-                </label>
-
-                <label>
-                  <span>State</span>
-                  <input value={form.state} onChange={(event) => setForm({ ...form, state: event.target.value })} />
-                </label>
+                <label><span>Area</span><input value={form.area} onChange={(event) => setForm({ ...form, area:event.target.value })} /></label>
+                <label><span>City</span><input value={form.city} onChange={(event) => setForm({ ...form, city:event.target.value })} /></label>
+                <label><span>District</span><input value={form.district} onChange={(event) => setForm({ ...form, district:event.target.value })} /></label>
+                <label><span>State</span><input value={form.state} onChange={(event) => setForm({ ...form, state:event.target.value })} /></label>
+                <label><span>IFSC Code</span><div className="saInlineField"><input value={form.bankDetails?.ifsc||""} onChange={(event)=>changeIfsc(event.target.value)} placeholder="11-character IFSC" />{ifscLoading&&<Loader2 className="spin" size={14}/>}</div><small>Bank details auto-fetch from IFSC MASTER.</small></label>
+                <label><span>Bank Name</span><input value={form.bankDetails?.bankName||""} readOnly /></label>
+                <label><span>Branch</span><input value={form.bankDetails?.branchName||""} readOnly /></label>
+                <label><span>Bank City</span><input value={form.bankDetails?.city||""} readOnly /></label>
+                <label><span>Bank State</span><input value={form.bankDetails?.state||""} readOnly /></label>
+                <label><span>Branch Area</span><input value={form.bankDetails?.branchArea||""} readOnly /></label>
+                <label><span>STD Code</span><input value={form.bankDetails?.stdCode||""} readOnly /></label>
+                <label><span>Phone</span><input value={form.bankDetails?.phone||""} readOnly /></label>
+                <label><span>Contact</span><input value={form.bankDetails?.contactNo||""} readOnly /></label>
+                <label className="saWideField"><span>Bank Address</span><input value={form.bankDetails?.bankAddress||""} readOnly /></label>
 
                 <label>
                   <span>Email ID *</span>

@@ -1,4 +1,54 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5050/api";
+const CONFIGURED_API_URL = String(import.meta.env.VITE_API_URL || "http://localhost:5077/api").replace(/\/$/, "");
+
+// Development/LAN installs often change IP addresses (for example after a router
+// reconnect). Keep the configured VITE_API_URL as the primary destination, but
+// for SAFE GET requests allow one automatic retry against the current browser
+// host while preserving the configured protocol/port/path. Mutating requests are
+// never retried, which prevents duplicate invoices/notes if a response is lost.
+const sameHostApiUrl = () => {
+  if (typeof window === "undefined") return "";
+  try {
+    const configured = new URL(CONFIGURED_API_URL, window.location.origin);
+    const protocol = configured.protocol || window.location.protocol;
+    const port = configured.port ? `:${configured.port}` : "";
+    const path = configured.pathname.replace(/\/$/, "") || "/api";
+    return `${protocol}//${window.location.hostname}${port}${path}`;
+  } catch {
+    return `${window.location.protocol}//${window.location.hostname}:5077/api`;
+  }
+};
+
+const apiBaseCandidates = (options = {}) => {
+  const method = String(options.method || "GET").toUpperCase();
+  const bases = [CONFIGURED_API_URL];
+  if (method === "GET" || method === "HEAD") {
+    const fallback = sameHostApiUrl();
+    if (fallback && !bases.includes(fallback)) bases.push(fallback);
+  }
+  return bases;
+};
+
+async function fetchApi(path, options, headers) {
+  const bases = apiBaseCandidates(options);
+  let lastNetworkError = null;
+
+  for (let index = 0; index < bases.length; index += 1) {
+    const base = bases[index];
+    try {
+      return await fetch(`${base}${path}`, { ...options, headers });
+    } catch (error) {
+      lastNetworkError = error;
+      if (index === bases.length - 1) break;
+    }
+  }
+
+  const attempted = bases.join(" , ");
+  const error = new Error(`Backend API is unreachable. Tried: ${attempted}`);
+  error.code = "API_UNREACHABLE";
+  error.cause = lastNetworkError;
+  error.attemptedApiBases = bases;
+  throw error;
+}
 
 // Legacy SUPERADMIN JWTs contained the complete permission catalogue and could
 // exceed 50 KB. Treat such a stored token as unusable so it is never sent in a
@@ -143,16 +193,21 @@ export async function api(path, options = {}) {
     if (tenantId) headers["X-Tenant-Id"] = tenantId;
   }
 
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  const res = await fetchApi(path, options, headers);
   const type = res.headers.get("content-type") || "";
   const payload = type.includes("application/json")
     ? await res.json()
     : await res.text();
 
   if (!res.ok) {
-    throw new Error(
+    const error = new Error(
       payload?.message || payload || `Request failed ${res.status}`,
     );
+    error.status = res.status;
+    error.details = payload?.details;
+    error.code = payload?.details?.code || payload?.code || "";
+    error.payload = payload;
+    throw error;
   }
 
   return payload?.data ?? payload;
@@ -167,7 +222,7 @@ export async function apiBlob(path, options = {}) {
     if (tenantId) headers["X-Tenant-Id"] = tenantId;
   }
 
-  const res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  const res = await fetchApi(path, { ...options, method: options.method || "GET" }, headers);
   if (!res.ok) {
     const type = res.headers.get("content-type") || "";
     const payload = type.includes("application/json")

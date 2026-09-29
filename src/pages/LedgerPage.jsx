@@ -9,7 +9,8 @@ import {
   Send,
 } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
-import { api, apiBlob } from "../lib/api.js";
+import { api, apiBlob, getUser } from "../lib/api.js";
+import { configuredFinancialYear, financialYearOptions } from "../lib/financialYear.js";
 import { accessForPath } from "../lib/permissionAccess.js";
 
 const money = (value) => Number(value || 0).toLocaleString("en-IN", {
@@ -22,23 +23,6 @@ const dateOnly = (value) => {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return String(value).slice(0, 10);
   return d.toLocaleDateString("en-GB");
-};
-
-const currentFinancialYear = () => {
-  const selected = localStorage.getItem("financialYearSelected");
-  if (selected) return selected;
-  const now = new Date();
-  const start = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
-  return `${start}-${String(start + 1).slice(-2)}`;
-};
-
-const financialYearOptions = (selected) => {
-  const start = Number(String(selected || currentFinancialYear()).split("-")[0]);
-  const base = Number.isFinite(start) ? start : new Date().getFullYear();
-  return Array.from({ length: 8 }, (_, index) => {
-    const year = base - 4 + index;
-    return `${year}-${String(year + 1).slice(-2)}`;
-  });
 };
 
 const optionValue = (row) => `${row.entityType}|${row.entityId}`;
@@ -74,7 +58,7 @@ const downloadBlob = async (path, fallbackName) => {
 
 export default function LedgerPage({ page }) {
   const access = accessForPath(page?.path || "/dms/ledger");
-  const [fy, setFy] = useState(currentFinancialYear());
+  const [fy, setFy] = useState(configuredFinancialYear(getUser()));
   const [options, setOptions] = useState([]);
   const [optionSearch, setOptionSearch] = useState("");
   const [selectedValue, setSelectedValue] = useState("");
@@ -104,7 +88,7 @@ export default function LedgerPage({ page }) {
     );
   }, [options, optionSearch]);
 
-  const years = useMemo(() => financialYearOptions(fy), [fy]);
+  const years = useMemo(() => financialYearOptions(getUser(), { count: 8, extra: [fy] }), [fy]);
 
   const flash = (text, type = "good") => {
     setMessage(text);

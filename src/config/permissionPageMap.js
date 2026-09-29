@@ -17,6 +17,7 @@ export const PAGE_PERMISSION_MAP = {
   ),
   "/dms/leads": p("dms.sales.sales_lead"),
   "/dms/customers": p("dms.users.create_customer"),
+  "/dms/unassigned-customers": p("dms.users.create_customer"),
   "/dms/customer-grades": p("dms.users.create_grade"),
   "/dms/transporters": p("dms.users.create_transporter"),
   "/dms/legacy-migration": p("dms.users.create_customer", "dms.users.create_user", "dms.product.product_creation", "dms.others.units"),
@@ -40,8 +41,11 @@ export const PAGE_PERMISSION_MAP = {
   ),
   "/dms/dispatch": p("dms.sales.dispatch_details"),
   "/dms/sales-invoices": p("dms.sales.sales_invoice", "dms.sales.select_invoice"),
+  "/dms/sales-list": p("dms.sales.sales_invoice", "dms.sales.select_invoice"),
+  "/dms/list-of-sales-with-product": p("dms.sales.sales_invoice", "dms.sales.select_invoice", "dms.sales_reports.product_wise_sale_report"),
   "/dms/sales-returns": p("dms.sales.sales_return"),
   "/dms/credit-notes": p("dms.sales.creditnote"),
+  "/dms/delivery-notes": p("dms.sales.sales_invoice", "dms.sales.dispatch_details"),
 
   "/dms/purchase-orders": p(
     "dms.purchase.purchase_order",
@@ -50,6 +54,7 @@ export const PAGE_PERMISSION_MAP = {
   ),
   "/dms/purchase-invoices": p("dms.purchase.purchase_invoice"),
   "/dms/purchase-returns": p("dms.purchase.purchase_return"),
+  "/dms/debit-notes": p("dms.purchase.debit_notes"),
 
   "/dms/products": p("dms.product.product_creation", "dms.others.product"),
   "/dms/product-categories": p("dms.product.category_list", "dms.product.subcategory_list"),
