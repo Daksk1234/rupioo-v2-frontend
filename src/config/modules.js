@@ -513,68 +513,21 @@ export const nav = {
       ],
     },
     {
-      group: "GST & Compliance",
+      group: "Reports",
       items: [
         p(
-          "/dms/gst-dashboard",
-          "GST Health",
-          BadgeCheck,
-          "GST compliance and exception health",
-        ),
-        p(
-          "/dms/gst-reports",
-          "GST Reports",
+          "/dms/reports",
+          "Reports",
           FileBarChart,
-          "Old-DMS GST report suite: GSTR 1, GSTR 2B, GSTR 3B, HSN Wise, GST Input/Output and Tax",
-          "gst-reports",
+          "Report tabs",
+          "report-center",
         ),
         p(
-          "/dms/gstr1",
-          "GSTR-1",
-          FileText,
-          "Old-DMS GSTR-1 with B2B/B2CL/B2CS and CDNR/CDNUR",
-          "gst-reports",
-        ),
-        p(
-          "/dms/gstr2b",
-          "GSTR-2B",
-          GitCompareArrows,
-          "Old-DMS purchase/ITC report",
-          "gst-reports",
-        ),
-        p(
-          "/dms/gstr3b",
-          "GSTR-3B",
-          GitCompareArrows,
-          "Old-DMS GSTR-3B summary",
-          "gst-reports",
-        ),
-        p(
-          "/dms/hsn-wise-report",
-          "HSN Wise",
-          Barcode,
-          "Old-DMS HSN-wise GST report and reconciliation",
-          "gst-reports",
-        ),
-        p(
-          "/dms/gst-input-output",
-          "GST Input / Output",
-          Scale,
-          "Old-DMS GST input/output report",
-          "gst-reports",
-        ),
-        p(
-          "/dms/tax-report",
-          "Tax Report",
-          IndianRupee,
-          "Old-DMS total tax input, output and balance",
-          "gst-reports",
-        ),
-        p(
-          "/dms/gstr9",
-          "GSTR-9",
-          FileText,
-          "Annual reconciliation and return support",
+          "/dms/all-reports",
+          "All Reports",
+          ClipboardList,
+          "Existing All Reports page",
+          "reports",
         ),
       ],
     },
@@ -660,13 +613,6 @@ export const nav = {
           BrainCircuit,
           "Multi-bank personal/HUF books, AI classification, live Trading/P&L/Balance Sheet, 3-year migration and ITR readiness",
           "family-ai",
-        ),
-        p(
-          "/dms/reports",
-          "All DMS Reports",
-          FileBarChart,
-          "Central report catalogue with PDF/Excel/Print",
-          "reports",
         ),
         p(
           "/dms/settings",
@@ -910,14 +856,29 @@ export const nav = {
   ],
 };
 
+const hiddenDmsPages = [
+  p("/dms/gst-dashboard", "GST Health", BadgeCheck, "GST compliance and exception health"),
+  p("/dms/gst-reports", "GST Reports", FileBarChart, "GST report suite", "gst-reports"),
+  p("/dms/gstr1", "GSTR-1", FileText, "GSTR-1", "gst-reports"),
+  p("/dms/gstr2b", "GSTR-2B", GitCompareArrows, "GSTR-2B", "gst-reports"),
+  p("/dms/gstr3b", "GSTR-3B", GitCompareArrows, "GSTR-3B", "gst-reports"),
+  p("/dms/hsn-wise-report", "HSN Wise", Barcode, "HSN-wise GST report", "gst-reports"),
+  p("/dms/gst-input-output", "GST Input / Output", Scale, "GST input/output report", "gst-reports"),
+  p("/dms/tax-report", "Tax Report", IndianRupee, "Tax report", "gst-reports"),
+  p("/dms/gstr9", "GSTR-9", FileText, "Annual reconciliation and return support"),
+].map((item) => ({ ...item, app: "dms", group: "Reports" }));
+
 // Only MASTER and DMS are routed. HR/Production source definitions above are
 // intentionally dormant/commented-out at the routing layer.
 const enabledRouteApps = ["master", "dms"];
-export const allPages = enabledRouteApps.flatMap((app) =>
-  (nav[app] || []).flatMap((group) =>
-    group.items.map((item) => ({ ...item, app, group: group.group })),
+export const allPages = [
+  ...enabledRouteApps.flatMap((app) =>
+    (nav[app] || []).flatMap((group) =>
+      group.items.map((item) => ({ ...item, app, group: group.group })),
+    ),
   ),
-);
+  ...hiddenDmsPages,
+];
 export const pageByPath = Object.fromEntries(
   allPages.map((page) => [page.path, page]),
 );

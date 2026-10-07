@@ -3,8 +3,8 @@ import { RefreshCw, Search } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import DataTable from "../components/DataTable.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
-import { api, getUser } from "../lib/api.js";
-import { configuredFinancialYear } from "../lib/financialYear.js";
+import { api } from "../lib/api.js";
+import { currentFinancialYear } from "../lib/financialYear.js";
 import EditMasterLink from "../components/EditMasterLink.jsx";
 import { isAdminUser } from "../lib/adminVisibility.js";
 
@@ -16,13 +16,12 @@ const profitBand = (value) => {
   return "RED";
 };
 
-const profitTextColor = (value) => {
-  const band = profitBand(value);
-  if (band === "GREEN") return "#15803d";
-  if (band === "ORANGE") return "#c2410c";
-  if (band === "BLUE") return "#1d4ed8";
-  return "#b91c1c";
+const saleRateIncludingProfit = (saleRate, profitPercentage) => {
+  const rate = Number(saleRate || 0);
+  const profit = Math.max(3, Number(profitPercentage || 3));
+  return rate > 0 ? rate + (rate * profit / 100) : 0;
 };
+
 
 export default function PriceListPage() {
   const admin = isAdminUser();
@@ -31,9 +30,11 @@ export default function PriceListPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [maxDiscount, setMaxDiscount] = useState(0);
-  const [fy, setFy] = useState(configuredFinancialYear(getUser()));
+  const [fy, setFy] = useState(currentFinancialYear());
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState({ page: 1, pages: 1, total: 0 });
+  const [profitDrafts, setProfitDrafts] = useState({});
+  const [savingProfitId, setSavingProfitId] = useState("");
 
   const load = async (next = 1) => {
     setLoading(true);
@@ -42,7 +43,9 @@ export default function PriceListPage() {
       const d = await api(
         `/catalog/old-dms-price-list/products?q=${encodeURIComponent(q)}&financialYear=${encodeURIComponent(fy)}&page=${next}&limit=100`,
       );
-      setRows(d.items || []);
+      const items = d.items || [];
+      setRows(items);
+      setProfitDrafts(Object.fromEntries(items.map((row) => [String(row._id), String(Math.max(3, Number(row.profitPercentage || 3)))])));
       setMaxDiscount(Number(d.maxDiscount || 0));
       setMeta(d.meta || { page: next, pages: 1, total: (d.items || []).length });
       setPage(d.meta?.page || next);
@@ -58,6 +61,35 @@ export default function PriceListPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fy]);
 
+  const saveProfitPercentage = async (row) => {
+    const id = String(row?._id || "");
+    if (!id) return;
+    const raw = Number(profitDrafts[id]);
+    const profitPercentage = Number.isFinite(raw) ? Math.max(3, raw) : 3;
+    setProfitDrafts((prev) => ({ ...prev, [id]: String(profitPercentage) }));
+    if (Math.abs(profitPercentage - Math.max(3, Number(row.profitPercentage || 3))) < 0.0001) return;
+    setSavingProfitId(id);
+    setError("");
+    try {
+      await api("/catalog/old-dms-price-list/products", {
+        method: "PUT",
+        body: JSON.stringify({
+          financialYear: fy,
+          Products: [{
+            id,
+            profitPercentage,
+            changedField: "profitPercentage",
+          }],
+        }),
+      });
+      await load(page);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSavingProfitId("");
+    }
+  };
+
   const columns = useMemo(
     () => [
       {
@@ -68,7 +100,6 @@ export default function PriceListPage() {
         ),
       },
       { key: "sku", label: "SKU" },
-      { key: "hsnCode", label: "HSN" },
       {
         key: "averagePurchaseRate",
         label: "Average Purchase",
@@ -82,6 +113,55 @@ export default function PriceListPage() {
         ),
       },
       {
+        key: "profitPercentage",
+        label: "Profit %",
+        render: (r) => {
+          const id = String(r._id);
+          const saving = savingProfitId === id;
+          return (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="number"
+                min="3"
+                step="0.01"
+                value={profitDrafts[id] ?? "3"}
+                disabled={saving}
+                onChange={(e) => setProfitDrafts((prev) => ({ ...prev, [id]: e.target.value }))}
+                onBlur={() => saveProfitPercentage(r)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    e.currentTarget.blur();
+                  }
+                }}
+                title="Minimum profit is 3%"
+                style={{ width: 84, minWidth: 84 }}
+              />
+              <span>%</span>
+              {saving && <span className="tableSubText">Saving…</span>}
+            </div>
+          );
+        },
+      },
+      {
+        key: "saleRateIncludingProfit",
+        label: "Sales Rate Including Profit %",
+        render: (r) => {
+          const id = String(r._id);
+          const profit = Math.max(3, Number(profitDrafts[id] ?? r.profitPercentage ?? 3));
+          const baseSaleRate = Number(r.averageSaleRate || r.salePrice || 0);
+          const calculated = saleRateIncludingProfit(baseSaleRate, profit);
+          return (
+            <div>
+              <strong>₹{calculated.toFixed(2)}</strong>
+              <span className="tableSubText">
+                ₹{baseSaleRate.toFixed(2)} + {profit.toFixed(2)}%
+              </span>
+            </div>
+          );
+        },
+      },
+      {
         key: "averageSaleRate",
         label: "Average Sale / Sale Rate",
         render: (r) => (
@@ -93,15 +173,6 @@ export default function PriceListPage() {
           </div>
         ),
       },
-      ...(admin ? [{
-        key: "profitPercentage",
-        label: "Profit % (Auto)",
-        render: (r) => (
-          <strong style={{ color: profitTextColor(r.profitPercentage) }}>
-            {Number(r.profitPercentage || 0).toFixed(2)}%
-          </strong>
-        ),
-      }] : []),
       {
         key: "maxGradeDiscountPct",
         label: "Highest Grade",
@@ -128,14 +199,14 @@ export default function PriceListPage() {
         ),
       },
     ],
-    [maxDiscount, admin],
+    [maxDiscount, admin, profitDrafts, savingProfitId, fy, page],
   );
 
   return (
     <>
       <PageHeader
         title="Price List"
-        description={admin ? "Profit is calculated automatically from the simple average sale rate and simple average purchase rate of posted invoices." : "Current product pricing and invoice-average reference rates."}
+        description="Profit % is editable with a minimum of 3%. Sales Rate Including Profit % = Sale Rate + (Sale Rate × Profit %)."
         actions={false}
       />
 
@@ -143,9 +214,9 @@ export default function PriceListPage() {
 
       <section className="panel compactActionPanel">
         <div>
-          <strong>{admin ? "Automatic Average Profit" : "Invoice Average Pricing"}</strong>
+          <strong>Editable Profit Pricing</strong>
           <span>
-            {admin ? "Average Sale = simple mean of posted sale invoice line rates. Average Purchase = simple mean of posted purchase invoice line rates. Profit % = (Average Sale − Average Purchase) ÷ Average Purchase × 100." : "Average sale and purchase reference rates are calculated from posted invoice lines. Profit and margin health are restricted to Admin users."}
+            Average Purchase comes from posted purchase invoice lines for the selected FY. Profit % cannot be below 3%. Sales Rate Including Profit % is calculated from the Sale Rate, not from Average Purchase.
           </span>
         </div>
         <div style={{ display: "flex", flexDirection: "row", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
@@ -164,7 +235,7 @@ export default function PriceListPage() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && load(1)}
-              placeholder="Search product / SKU / HSN / category..."
+              placeholder="Search product / SKU / category..."
             />
           </div>
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>

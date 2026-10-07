@@ -7,6 +7,7 @@ import {
   Pencil,
   PackageCheck,
   FileText,
+  Mail,
   UploadCloud,
   RefreshCw,
   Search,
@@ -18,12 +19,12 @@ import SalesInvoiceLayout from "../components/SalesInvoiceLayout.jsx";
 import PageHeader from "../components/PageHeader.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import CreateLookupButton from "../components/CreateLookupButton.jsx";
-import EditMasterLink from "../components/EditMasterLink.jsx";
 import { api, apiBlob, getUser } from "../lib/api.js";
 import { fetchTransactionParties, partyOptionLabel, partyGstin } from "../lib/partyDirectory.js";
 import { buildInvoiceTaxSummary, computeInvoiceAdjustments } from "../lib/invoiceAdjustments.js";
 import { isAdminUser } from "../lib/adminVisibility.js";
-import { configuredFinancialYear, currentFinancialYear, financialYearFromDate, financialYearOptions, initialDateForFinancialYear } from "../lib/financialYear.js";
+import { configuredFinancialYear, currentFinancialYear, financialYearFromDate, financialYearOptions, initialDateForFinancialYear, localToday } from "../lib/financialYear.js";
+import { monthBounds } from "../lib/periodFilters.js";
 
 const floor2 = (n) => Math.floor((Number(n) || 0) * 100) / 100;
 const ceil2 = (n) => Math.ceil((Number(n) || 0) * 100) / 100;
@@ -35,13 +36,33 @@ const ymd = (v) => {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? String(v).slice(0, 10) : d.toISOString().slice(0, 10);
 };
+const safeDownloadPart = (value, fallback = "file") => {
+  const cleaned = String(value || fallback)
+    .replace(/[\\/:*?"<>|\r\n]+/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/-+/g, "-")
+    .trim();
+  return (cleaned || fallback).slice(0, 90);
+};
+const invoicePdfDownloadName = (invoice = {}) =>
+  `${safeDownloadPart(invoice.customerNameSnapshot || "Customer", "Customer")}-${safeDownloadPart(invoice.invoiceNo || invoice._id || "Invoice", "Invoice")}.pdf`;
 const currentFY = currentFinancialYear;
 const fyStart = (fy) => Number(String(fy || currentFY()).slice(0, 4)) || new Date().getFullYear();
 const fyLabel = (fy) => `FY ${String(fy || "").replace(/^FY\s*/i, "")}`;
 const buildFinancialYears = (count = 10) => financialYearOptions(getUser(), { count });
-const saleFromMRPByGrade = (mrp, pct) => floor2(Number(mrp || 0) / (1 + Number(pct || 0) / 100));
 const basicFromSaleGST = (sale, gst) => ceil2(Number(sale || 0) / (1 + Number(gst || 0) / 100));
 const saleFromBasicGST = (basic, gst) => round2(Number(basic || 0) * (1 + Number(gst || 0) / 100));
+const applyGradeDiscountToBasic = (basic, pct) => {
+  const base = Math.max(0, Number(basic || 0));
+  const discount = Math.min(100, Math.max(0, Number(pct || 0)));
+  return floor2(base * (1 - discount / 100));
+};
+const productBaseBasicRate = (product = {}) => {
+  const configuredBasic = Number(product.salePrice || 0);
+  if (configuredBasic > 0) return configuredBasic;
+  // Fallback only for older products that do not yet have a Sale Rate saved.
+  return basicFromSaleGST(Number(product.mrp || 0), Number(product.gstRate || 0));
+};
 const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const fyMonthOrder = ["April", "May", "June", "July", "August", "September", "October", "November", "December", "January", "February", "March"];
 
@@ -144,7 +165,7 @@ function classifyRegistration(row, customer) {
   ).trim();
   if (reg.includes("unreg")) return "UNREGISTER";
   if (reg.includes("regular") || reg.includes("registered")) return "REGULAR";
-  return gst ? "REGULAR" : "REGULAR";
+  return /^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]$/i.test(gst) ? "REGULAR" : "UNREGISTER";
 }
 
 function getInvoiceMonth(row) {
@@ -187,6 +208,14 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   const editId = embedded ? "" : (searchParams.get("edit") || "");
   const sourceOrderId = embedded ? "" : (searchParams.get("orderId") || "");
   const createMode = embedded ? true : (searchParams.get("create") === "1" || Boolean(editId) || Boolean(sourceOrderId));
+  const requestedFinancialYear = searchParams.get("financialYear") || configuredFinancialYear(sessionUser);
+  // New Sales Invoices always start from today's date/current FY. Editing (and
+  // order-draft lookup) keeps the FY supplied in the URL so historical records
+  // can still be opened correctly. Changing the invoice date below immediately
+  // switches the posting FY and therefore the invoice-number series.
+  const initialPageFinancialYear = (!editId && !sourceOrderId)
+    ? currentFinancialYear()
+    : requestedFinancialYear;
 
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -204,23 +233,26 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   const [adjustmentMasterEditor, setAdjustmentMasterEditor] = useState(null);
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
-  const [fy, setFy] = useState(searchParams.get("financialYear") || configuredFinancialYear(sessionUser));
-  const [listFy, setListFy] = useState("ALL");
+  const [fy, setFy] = useState(initialPageFinancialYear);
+  const [listFy, setListFy] = useState(currentFinancialYear());
   const [nextInvoiceNo, setNextInvoiceNo] = useState("");
+  const [invoiceNumberSeries, setInvoiceNumberSeries] = useState(null);
   const invoiceNoManuallyEditedRef = useRef(false);
   const [seriesMsg, setSeriesMsg] = useState("");
   const [customerFinancial, setCustomerFinancial] = useState({});
   const [editingOriginalGrand, setEditingOriginalGrand] = useState(0);
   const [deliveryTarget, setDeliveryTarget] = useState(null);
-  const [deliveryForm, setDeliveryForm] = useState({ deliveredAt: "", deliveredTo: "", deliveryMobile: "", vehicleNo: "", biltyNo: "", deliveryRemarks: "" });
-  const [deliveryProof, setDeliveryProof] = useState(null);
+  const [deliveryForm, setDeliveryForm] = useState({ deliveredAt: "", transporterName: "", noOfPackages: "", cnDate: "", cnQty: "", cnNumber: "", vehicleNo: "", biltyNo: "", deliveryRemarks: "" });
   const [biltyCopy, setBiltyCopy] = useState(null);
   const [deliverySaving, setDeliverySaving] = useState(false);
+  const [actionInvoice, setActionInvoice] = useState(null);
+  const [deliveryCnImage, setDeliveryCnImage] = useState(null);
+  const [emailSendingId, setEmailSendingId] = useState("");
   const [orderDraft, setOrderDraft] = useState(null);
 
   const [search, setSearch] = useState("");
   const [activeBucket, setActiveBucket] = useState("REGULAR");
-  const [periodType, setPeriodType] = useState("YEARLY");
+  const [periodType, setPeriodType] = useState("MONTHLY");
   const [selectedMonth, setSelectedMonth] = useState(fyMonthOrder[new Date().getMonth() >= 3 ? new Date().getMonth() - 3 : new Date().getMonth() + 9] || "April");
   const [selectedQuarter, setSelectedQuarter] = useState("Q1");
   const [selectedHalf, setSelectedHalf] = useState("H1");
@@ -245,7 +277,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
   const [header, setHeader] = useState({
     invoiceNo: "",
-    date: initialDateForFinancialYear(fy),
+    date: editId ? initialDateForFinancialYear(fy) : localToday(),
     orderNo: "",
     arn: "",
     noOfPackages: 0,
@@ -277,16 +309,23 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     };
   };
 
-  const resetCreate = () => {
+  const resetCreate = ({ resetToTodayFinancialYear = false } = {}) => {
     setCustomerId("");
     setRows([newRow()]);
     setAdjustments([]);
     setCustomerFinancial({});
     setEditingOriginalGrand(0);
+    setInvoiceNumberSeries(null);
+    setNextInvoiceNo("");
     invoiceNoManuallyEditedRef.current = false;
+    const today = localToday();
+    if (resetToTodayFinancialYear) {
+      const todayFy = financialYearFromDate(today) || currentFinancialYear();
+      if (todayFy !== fy) setFy(todayFy);
+    }
     setHeader({
       invoiceNo: "",
-      date: initialDateForFinancialYear(fy),
+      date: today,
       orderNo: "",
       arn: "",
       noOfPackages: 0,
@@ -394,7 +433,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         : [fy];
       const invoicePromise = Promise.all(
         invoiceYears.map((year) =>
-          fetchAllPaged(`/transactions/sales-invoices?financialYear=${encodeURIComponent(year)}`, 100)
+          fetchAllPaged(`/transactions/sales-invoices?financialYear=${encodeURIComponent(year)}${!createMode && listFy !== "ALL" && periodType === "MONTHLY" ? `&fromDate=${monthBounds(listFy, selectedMonth).startDate}&toDate=${monthBounds(listFy, selectedMonth).endDate}` : ""}`, 100)
             .catch(() => []),
         ),
       ).then((groups) => groups.flat());
@@ -429,24 +468,11 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         setNextInvoiceNo(invoice.invoiceNo || "");
         invoiceNoManuallyEditedRef.current = false;
         setSeriesMsg("");
-      } else if (createMode) {
-        try {
-          const invoiceNumberFy = financialYearFromDate(header.date) || fy;
-          const n = await api(`/transactions/sales-invoices/next-number?financialYear=${encodeURIComponent(invoiceNumberFy)}`);
-          const autoInvoiceNo = n.invoiceNo || "";
-          setNextInvoiceNo(autoInvoiceNo);
-          if (!invoiceNoManuallyEditedRef.current) {
-            setHeader((current) => ({ ...current, invoiceNo: autoInvoiceNo }));
-          }
-          setSeriesMsg("");
-        } catch (e) {
-          setNextInvoiceNo("");
-          if (!invoiceNoManuallyEditedRef.current) {
-            setHeader((current) => ({ ...current, invoiceNo: "" }));
-          }
-          setSeriesMsg(e.message);
-        }
       }
+      // Do NOT request the next Sales Invoice number here. The dedicated effect
+      // below is the single source of truth for numbering. Previously both load()
+      // and the effect requested a number; an older FY request could finish late
+      // and overwrite the correct number after the user changed the invoice date.
     } catch (e) {
       setMsg(e.message);
     } finally {
@@ -457,17 +483,29 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fy, listFy, editId, createMode, sourceOrderId]);
+  }, [fy, listFy, editId, createMode, sourceOrderId, periodType, selectedMonth]);
 
   useEffect(() => {
     let active = true;
     if (!createMode || editId) return () => { active = false; };
     const customerQuery = customerId ? `&customerGlobalId=${encodeURIComponent(customerId)}` : "";
     const invoiceNumberFy = financialYearFromDate(header.date) || fy;
+    // Never show the previous party/FY series while the new series is loading.
+    setInvoiceNumberSeries(null);
     api(`/transactions/sales-invoices/next-number?financialYear=${encodeURIComponent(invoiceNumberFy)}${customerQuery}`)
       .then((result) => {
         if (!active) return;
-        const autoInvoiceNo = result?.invoiceNo || "";
+        // Never let a stale/misrouted response from another FY overwrite the
+        // number for the date currently selected in the form.
+        if (result?.financialYear && String(result.financialYear) !== String(invoiceNumberFy)) return;
+        const autoInvoiceNo = String(result?.serialText ?? result?.serial ?? result?.invoiceNo ?? "").trim();
+        setInvoiceNumberSeries({
+          prefix: String(result?.prefix || "").trim(),
+          suffix: String(result?.suffix || "").trim(),
+          cashInvoice: Boolean(result?.cashInvoice),
+          customerGlobalId: customerId,
+          financialYear: invoiceNumberFy,
+        });
         setNextInvoiceNo(autoInvoiceNo);
         if (!invoiceNoManuallyEditedRef.current) {
           setHeader((current) => ({ ...current, invoiceNo: autoInvoiceNo }));
@@ -477,6 +515,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       .catch((error) => {
         if (!active) return;
         setNextInvoiceNo("");
+        setInvoiceNumberSeries(null);
         if (!invoiceNoManuallyEditedRef.current) {
           setHeader((current) => ({ ...current, invoiceNo: "" }));
         }
@@ -484,6 +523,19 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       });
     return () => { active = false; };
   }, [customerId, fy, header.date, createMode, editId]);
+
+  // The editable input remains numeric, but its fixed prefix/C/suffix and
+  // complete printed invoice number are visible before the user posts it.
+  const activeInvoiceSeries = !editId &&
+    invoiceNumberSeries?.customerGlobalId === customerId &&
+    invoiceNumberSeries?.financialYear === (financialYearFromDate(header.date) || fy)
+      ? invoiceNumberSeries : null;
+  const invoicePrefix = activeInvoiceSeries?.prefix
+    ? `${activeInvoiceSeries.prefix}${activeInvoiceSeries.cashInvoice ? "C" : "-"}` : "";
+  const invoiceSuffix = activeInvoiceSeries?.suffix
+    ? `${activeInvoiceSeries.cashInvoice ? "" : "-"}${activeInvoiceSeries.suffix}` : "";
+  const fullInvoiceNumberPreview = activeInvoiceSeries && /^\d+$/.test(String(header.invoiceNo || ""))
+    ? `${invoicePrefix}${header.invoiceNo}${invoiceSuffix}` : "";
 
   const customer = customers.find((c) => c.globalCustomerId === customerId);
   const customerTransport = customer?.assignedTransportDetails || null;
@@ -520,7 +572,14 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     setHeader((h) => ({ ...h, [k]: v }));
     if (k === "date" && !editId) {
       const dateFy = financialYearFromDate(v);
-      if (dateFy && dateFy !== fy) setFy(dateFy);
+      if (dateFy && dateFy !== fy) {
+        // Crossing an FY boundary must switch to that FY's own invoice series.
+        // Do not carry a manually typed/auto-filled serial from the old FY.
+        invoiceNoManuallyEditedRef.current = false;
+        setHeader((h) => ({ ...h, date: v, invoiceNo: "" }));
+        setNextInvoiceNo("");
+        setFy(dateFy);
+      }
     }
   };
   const setEInvoice = (k, v) => setHeader((h) => ({
@@ -558,8 +617,9 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     const p = products.find((x) => String(x._id) === String(id));
     if (!p) return;
     const gradePct = Number(customer?.gradeDiscountPct || 0);
-    const saleRate = saleFromMRPByGrade(p.mrp || p.salePrice || 0, gradePct);
-    const basic = basicFromSaleGST(saleRate, p.gstRate || 0);
+    const baseBasic = productBaseBasicRate(p);
+    const basic = applyGradeDiscountToBasic(baseBasic, gradePct);
+    const saleRate = saleFromBasicGST(basic, p.gstRate || 0);
     setRows((rs) => rs.map((r, i) => i === index ? recalc({
       ...r,
       productId: id,
@@ -655,11 +715,24 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   };
 
   useEffect(() => {
-    if (customerId) {
-      setRows((rs) => rs.map((r) => r.productId ? r : { ...r, gradeDiscountPct: Number(customer?.gradeDiscountPct || 0) }));
-    }
+    if (!customerId || !createMode || editId) return;
+    const gradePct = Number(customer?.gradeDiscountPct || 0);
+    setRows((rs) => rs.map((r) => {
+      if (!r.productId) return { ...r, gradeDiscountPct: gradePct };
+      const p = products.find((item) => String(item._id) === String(r.productId));
+      if (!p) return { ...r, gradeDiscountPct: gradePct };
+      const basic = applyGradeDiscountToBasic(productBaseBasicRate(p), gradePct);
+      return recalc({
+        ...r,
+        gradeDiscountPct: gradePct,
+        basicRate: basic,
+        saleRate: saleFromBasicGST(basic, r.gstRate ?? p.gstRate ?? 0),
+      });
+    }));
+    // Re-price only while creating a new invoice. Existing invoices keep their
+    // historical saved rate when opened for edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerId]);
+  }, [customerId, createMode, editId, products]);
 
   const adjustmentCalc = useMemo(() => {
     const base = round2(rows.reduce((s, r) => s + Number(r.taxable || 0), 0));
@@ -726,7 +799,12 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   const saveInvoice = async ({ stayOnCreate = embedded } = {}) => {
     setMsg("");
     if (!String(header.invoiceNo || "").trim()) { setMsg("Invoice Number is required"); return false; }
+    if (!editId && !/^\d+$/.test(String(header.invoiceNo || "").trim())) { setMsg("Invoice Number must contain numbers only"); return false; }
     if (!customerId) { setMsg("Select a buyer / party"); return false; }
+    if (!editId && !activeInvoiceSeries) {
+      setMsg("Select the buyer and let the correct registered/C invoice series load before posting.");
+      return false;
+    }
     if (!header.warehouseId) { setMsg("Warehouse is mandatory"); return false; }
     if (rows.some((r) => !r.productId || Number(r.qty || 0) <= 0)) { setMsg("Complete every product row"); return false; }
     if (rows.some((r) => r.qtyError)) { setMsg("One or more product rows have insufficient stock"); return false; }
@@ -770,7 +848,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         body: JSON.stringify(payload),
       });
       setMsg(`Sales Invoice ${inv.invoiceNo} ${editId ? "updated" : "posted"}`);
-      resetCreate();
+      resetCreate({ resetToTodayFinancialYear: Boolean(stayOnCreate) });
       await load();
       if (!stayOnCreate) setSearchParams({ financialYear: postingFy });
       return true;
@@ -814,12 +892,12 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
   const deleteInvoice = async () => {
     if (!editId) return;
-    if (!window.confirm(`Delete invoice ${header.invoiceNo}? Stock will be restored and accounting will be reversed.`)) return;
+    if (!window.confirm(`Permanently delete Sales Invoice ${header.invoiceNo}? The invoice document will be removed from the database. Stock will be restored and accounting will be reversed. This cannot be undone.`)) return;
     setLoading(true);
     setMsg("");
     try {
       await api(`/transactions/sales-invoices/${editId}?financialYear=${encodeURIComponent(fy)}`, { method: "DELETE" });
-      setMsg(`Sales Invoice ${header.invoiceNo} deleted`);
+      setMsg(`Sales Invoice ${header.invoiceNo} permanently deleted`);
       setSearchParams({ financialYear: fy });
       resetCreate();
       await load();
@@ -831,13 +909,20 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   };
 
   const openCreate = () => {
-    resetCreate();
-    setSearchParams({ create: "1", financialYear: fy });
+    const todayFy = currentFinancialYear();
+    resetCreate({ resetToTodayFinancialYear: true });
+    setFy(todayFy);
+    setSearchParams({ create: "1", financialYear: todayFy });
   };
   const openInvoiceEdit = (row) => {
     const nextFy = row.financialYear || fy;
+    setActionInvoice(null);
     setFy(nextFy);
     setSearchParams({ edit: row._id, financialYear: nextFy });
+  };
+  const openInvoiceActions = (row) => {
+    setActionInvoice(row);
+    setMsg("");
   };
   const backToList = () => {
     setSearchParams({ financialYear: fy });
@@ -899,11 +984,11 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     if (groupedRows.length) {
       setMonthOpen((prev) => {
         const next = { ...prev };
-        groupedRows.forEach((g) => { if (next[g.key] === undefined) next[g.key] = false; });
+        groupedRows.forEach((g) => { if (next[g.key] === undefined) next[g.key] = periodType === "MONTHLY"; });
         return next;
       });
     }
-  }, [groupedRows]);
+  }, [groupedRows, periodType]);
 
   const listTotals = useMemo(() => periodFiltered.reduce((a, r) => {
     const t = getInvoiceTaxSplit(r);
@@ -916,18 +1001,58 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     };
   }, { basic:0, igst:0, cgst:0, sgst:0, roundOff:0, grand:0, net:0 }), [periodFiltered]);
 
+  const sendInvoiceMail = async (invoice) => {
+    if (!invoice?._id) return;
+    setEmailSendingId(invoice._id);
+    setMsg("");
+    try {
+      const result = await api(`/transactions/sales-invoices/${invoice._id}/email`, {
+        method: "POST",
+        body: JSON.stringify({ financialYear: invoice.financialYear || fy }),
+      });
+      setMsg(result?.status === "SENT"
+        ? `Invoice ${invoice.invoiceNo} emailed to ${result.to}.`
+        : `Invoice email status: ${result?.status || "not sent"}${result?.error ? ` - ${result.error}` : ""}`);
+    } catch (error) {
+      setMsg(error.message || "Could not email invoice");
+    } finally {
+      setEmailSendingId("");
+    }
+  };
+
   const openDelivery = (invoice) => {
     setDeliveryTarget(invoice);
-    setDeliveryProof(null);
     setBiltyCopy(null);
+    setDeliveryCnImage(null);
+    const savedCn = invoice?.consignmentNote || {};
     setDeliveryForm({
       deliveredAt: new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16),
-      deliveredTo: "",
-      deliveryMobile: "",
-      vehicleNo: "",
-      biltyNo: "",
-      deliveryRemarks: "",
+      transporterName: invoice?.delivery?.transporterName || invoice?.transportAssignment?.transporterNameSnapshot || "",
+      noOfPackages: String(invoice?.delivery?.noOfPackages ?? invoice?.noOfPackages ?? ""),
+      cnDate: ymd(savedCn.cnDate) || "",
+      cnQty: savedCn.cnQty ?? "",
+      cnNumber: invoice?.delivery?.cnNumber || savedCn.cnNumber || "",
+      vehicleNo: invoice?.delivery?.vehicleNo || "",
+      biltyNo: invoice?.delivery?.biltyNo || "",
+      deliveryRemarks: invoice?.delivery?.remarks || "",
     });
+  };
+
+  const openSavedCnImage = async (invoice) => {
+    const fileId = invoice?.consignmentNote?.imageFileId;
+    if (!fileId) return;
+    const viewer = window.open("", "_blank");
+    try {
+      if (viewer) viewer.document.body.innerHTML = "<div style='font-family:Arial;padding:24px'>Opening CN image…</div>";
+      const { blob } = await apiBlob(`/files/${encodeURIComponent(fileId)}`);
+      const url = URL.createObjectURL(blob);
+      if (viewer) viewer.location.href = url;
+      else window.location.href = url;
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) {
+      if (viewer && !viewer.closed) viewer.close();
+      setMsg(error.message || "Could not open CN image");
+    }
   };
 
   const deliveryCustomer = deliveryTarget ? customerMap.get(String(deliveryTarget.customerGlobalId || "")) : null;
@@ -935,23 +1060,38 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
   const markDelivered = async () => {
     if (!deliveryTarget) return;
-    if (!deliveryForm.deliveredTo.trim()) return setMsg("Delivered To is required");
-    if (!deliveryProof) return setMsg("Delivery proof is required");
+    const packages = Number(deliveryForm.noOfPackages);
+    if (!Number.isFinite(packages) || packages < 0) return setMsg("No. of Packages must be zero or more");
+    const cnTouched = Boolean(
+      String(deliveryForm.cnDate || "").trim() ||
+      String(deliveryForm.cnQty || "").trim() ||
+      String(deliveryForm.cnNumber || "").trim() ||
+      deliveryCnImage ||
+      deliveryTarget?.consignmentNote?.imageFileId
+    );
+    if (cnTouched) {
+      if (!String(deliveryForm.cnDate || "").trim()) return setMsg("CN Date is required when CN details are added");
+      if (!(Number(deliveryForm.cnQty) > 0)) return setMsg("CN Qty must be greater than zero");
+      if (!String(deliveryForm.cnNumber || "").trim()) return setMsg("CN Number is required when CN details are added");
+      if (!deliveryCnImage && !deliveryTarget?.consignmentNote?.imageFileId) return setMsg("CN Image/PDF is required when CN details are added");
+    }
+    if (deliveryNonLocal && !String(deliveryForm.biltyNo || "").trim()) return setMsg("Bilty / LR Number is required for a non-local customer");
     if (deliveryNonLocal && !biltyCopy) return setMsg("Bilty / LR copy is mandatory for a non-local customer");
     setDeliverySaving(true);
     try {
       const body = new FormData();
-      body.append("financialYear", fy);
+      body.append("financialYear", deliveryTarget.financialYear || fy);
       body.append("toStatus", "DELIVERED");
-      Object.entries(deliveryForm).forEach(([key, value]) => body.append(key, value || ""));
-      body.append("deliveryProof", deliveryProof);
+      Object.entries(deliveryForm).forEach(([key, value]) => body.append(key, value ?? ""));
       if (biltyCopy) body.append("biltyCopy", biltyCopy);
+      if (deliveryCnImage) body.append("cnImage", deliveryCnImage);
       const updated = await api(`/transactions/sales-invoices/${deliveryTarget._id}/process`, { method: "POST", body });
       const emailStatus = updated?.delivery?.emailStatus;
       setMsg(emailStatus === "SENT"
         ? `Invoice ${deliveryTarget.invoiceNo} delivered and emailed to ${updated.delivery.emailTo}.`
         : `Invoice ${deliveryTarget.invoiceNo} delivered. Email status: ${emailStatus || "not sent"}${updated?.delivery?.emailError ? ` - ${updated.delivery.emailError}` : ""}`);
       setDeliveryTarget(null);
+      setDeliveryCnImage(null);
       await load();
     } catch (error) {
       setMsg(error.message);
@@ -977,7 +1117,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       if (download) {
         const a = document.createElement("a");
         a.href = url;
-        a.download = `Invoice-${String(invoice.invoiceNo || invoice._id).replace(/[^a-z0-9._-]+/gi, "_")}.pdf`;
+        a.download = invoicePdfDownloadName(invoice);
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -1044,22 +1184,21 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
           <div className="oldDmsTableWrap">
             <table className="oldDmsInvoiceListTable">
-              <thead><tr><th>#</th><th>Invoice</th><th>Status</th><th>Invoice No.</th><th>Date</th><th>Party Name</th><th>Party Limit</th><th>User Name</th><th>Basic Total</th><th>IGST</th><th>CGST</th><th>SGST</th><th>Round Off</th><th>Grand Total</th><th>CN Status</th><th>Net After CN</th>{admin&&<th>Margin</th>}</tr></thead>
+              <thead><tr><th>#</th><th>Status</th><th>Invoice No.</th><th>Date</th><th>Party Name / Actions</th><th>Party Limit</th><th>User Name</th><th>Basic Total</th><th>IGST</th><th>CGST</th><th>SGST</th><th>Round Off</th><th>Grand Total</th><th>CN Status</th><th>Net After CN</th>{admin&&<th>Margin</th>}</tr></thead>
               <tbody>
-                {!groupedRows.length && <tr><td colSpan={admin?17:16} className="oldDmsEmpty">No sales invoice found for this period.</td></tr>}
+                {!groupedRows.length && <tr><td colSpan={admin?16:15} className="oldDmsEmpty">No sales invoice found for this period.</td></tr>}
                 {groupedRows.map((group) => (
                   <React.Fragment key={group.key}>
                     <tr className="oldDmsMonthRow" onClick={() => setMonthOpen((p) => ({ ...p, [group.key]: !p[group.key] }))}>
-                      <td colSpan={admin?17:16}><span>{monthOpen[group.key] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<b>{group.label}</b><small>{group.rows.length} invoice{group.rows.length === 1 ? "" : "s"} • {money(group.rows.reduce((s, r) => s + Number(r.grandTotal || 0), 0))}</small></span></td>
+                      <td colSpan={admin?16:15}><span>{monthOpen[group.key] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<b>{group.label}</b><small>{group.rows.length} invoice{group.rows.length === 1 ? "" : "s"} • {money(group.rows.reduce((s, r) => s + Number(r.grandTotal || 0), 0))}</small></span></td>
                     </tr>
                     {monthOpen[group.key] && group.rows.map((r, idx) => (
                       <tr key={r._id}>
                         <td>{idx + 1}</td>
-                        <td><div className="invoiceRowActions"><button className="oldDmsEditBtn" onClick={() => openInvoicePdf(r)} title="View / Print Master Invoice"><FileText size={13}/></button><button className="oldDmsEditBtn" onClick={() => openInvoicePdf(r, true)} title="Download Master Invoice"><Download size={13}/></button><button className="oldDmsEditBtn" disabled={String(r.creditNoteStatus || "NONE").toUpperCase() !== "NONE"} onClick={() => openInvoiceEdit(r)} title={String(r.creditNoteStatus || "NONE").toUpperCase() !== "NONE" ? "Cancel issued Credit Note before editing this invoice" : "Edit invoice"}><Pencil size={13}/></button>{String(r.workflowStatus || "").toUpperCase() !== "DELIVERED" && <button className="oldDmsEditBtn deliverAction" onClick={() => openDelivery(r)} title="Mark delivered + email invoice"><PackageCheck size={13}/></button>}</div></td>
                         <td><StatusBadge value={r.workflowStatus || r.status || "POSTED"} /></td>
-                        <td><button className="tableClickLink" onClick={() => openInvoicePdf(r)} title="View / Print Master Invoice">{r.invoiceNo || "—"}</button></td>
+                        <td><button className="tableClickLink" onClick={() => openInvoiceEdit(r)} title="Edit Sales Invoice">{r.invoiceNo || "—"}</button></td>
                         <td>{ymd(r.date || r.createdAt)}</td>
-                        <td><EditMasterLink to="/dms/customers" id={r.customerGlobalId} resource="customer">{r.partyNameDisplay || r.customerNameSnapshot || "—"}</EditMasterLink></td>
+                        <td><button className="tableClickLink" onClick={() => openInvoiceActions(r)} title="Open invoice actions">{r.partyNameDisplay || r.customerNameSnapshot || "—"}</button></td>
                         <td>{money(customerMap.get(String(r.customerGlobalId || ""))?.creditLimit || 0)}</td>
                         <td>{r.userNameDisplay || r.createdByNameSnapshot || "—"}</td>
                         <td>{money(r.subtotal ?? r.taxableTotal ?? 0)}</td>
@@ -1076,10 +1215,38 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
                   </React.Fragment>
                 ))}
               </tbody>
-              <tfoot><tr><td colSpan="8">TOTAL</td><td>{money(listTotals.basic)}</td><td>{money(listTotals.igst)}</td><td>{money(listTotals.cgst)}</td><td>{money(listTotals.sgst)}</td><td>{money(listTotals.roundOff)}</td><td>{money(listTotals.grand)}</td><td></td><td>{money(listTotals.net)}</td>{admin&&<td />}</tr></tfoot>
+              <tfoot><tr><td colSpan="7">TOTAL</td><td>{money(listTotals.basic)}</td><td>{money(listTotals.igst)}</td><td>{money(listTotals.cgst)}</td><td>{money(listTotals.sgst)}</td><td>{money(listTotals.roundOff)}</td><td>{money(listTotals.grand)}</td><td></td><td>{money(listTotals.net)}</td>{admin&&<td />}</tr></tfoot>
             </table>
           </div>
         </section>
+
+        {actionInvoice && (
+          <div className="modalOverlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setActionInvoice(null); }}>
+            <section className="panel modalPanel" style={{ maxWidth: 620 }}>
+              <div className="formTitle">
+                <div>
+                  <h3><FileText size={18}/> Invoice Actions</h3>
+                  <span>{actionInvoice.invoiceNo} • {actionInvoice.partyNameDisplay || actionInvoice.customerNameSnapshot || "Party"}</span>
+                </div>
+                <div className="formTitleActions"><button className="iconBtn" type="button" onClick={() => setActionInvoice(null)}><X/></button></div>
+              </div>
+              <div className="formGrid" style={{ gridTemplateColumns: "repeat(2,minmax(0,1fr))" }}>
+                <button className="btn primary" type="button" onClick={() => { const row = actionInvoice; setActionInvoice(null); openInvoicePdf(row); }}><FileText size={15}/> View / Print Invoice</button>
+                <button className="btn ghost" type="button" onClick={() => { const row = actionInvoice; setActionInvoice(null); openInvoicePdf(row, true); }}><Download size={15}/> Download Invoice</button>
+                <button className="btn ghost" type="button" disabled={emailSendingId === actionInvoice._id} onClick={() => sendInvoiceMail(actionInvoice)}><Mail size={15}/>{emailSendingId === actionInvoice._id ? " Sending..." : " Send Invoice Mail"}</button>
+                {String(actionInvoice.workflowStatus || "").toUpperCase() !== "DELIVERED" && (
+                  <button className="btn ghost" type="button" onClick={() => { const row = actionInvoice; setActionInvoice(null); openDelivery(row); }}><PackageCheck size={15}/> Mark Delivered</button>
+                )}
+              </div>
+              {actionInvoice.consignmentNote?.cnNumber && (
+                <div className="resultBanner good" style={{ marginTop: 12 }}>
+                  CN: <b>{actionInvoice.consignmentNote.cnNumber}</b> • {ymd(actionInvoice.consignmentNote.cnDate)} • Qty {Number(actionInvoice.consignmentNote.cnQty || 0)}
+                  {actionInvoice.consignmentNote.imageFileId && <button className="tableClickLink" type="button" onClick={() => openSavedCnImage(actionInvoice)} style={{ marginLeft: 10 }}>View CN Image</button>}
+                </div>
+              )}
+            </section>
+          </div>
+        )}
 
         {deliveryTarget && (
           <div className="modalOverlay deliveryProofOverlay">
@@ -1090,19 +1257,33 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
               </div>
               <div className="deliveryCustomerStrip">
                 <strong>{deliveryTarget.customerNameSnapshot}</strong>
-                <span>{deliveryNonLocal ? "NON-LOCAL - delivery proof + bilty/LR mandatory" : "LOCAL - delivery proof mandatory"}</span>
-                {deliveryTarget.transportAssignment?.mode!=="LOCAL"&&<small>{deliveryTarget.transportAssignment?.transporterNameSnapshot||"Transporter"} • Delivery: {deliveryTarget.transportAssignment?.deliveryStationNameSnapshot||deliveryTarget.transportAssignment?.serviceAreaSnapshot||"Assigned station"}{deliveryTarget.transportAssignment?.deliveryStationPincodeSnapshot?` (${deliveryTarget.transportAssignment.deliveryStationPincodeSnapshot})`:""}</small>}
+                <span>{deliveryNonLocal ? "NON-LOCAL DELIVERY • Bilty/LR number and copy required" : "LOCAL DELIVERY"}</span>
+                {deliveryTarget.transportAssignment?.deliveryStationNameSnapshot && <small>Delivery: {deliveryTarget.transportAssignment.deliveryStationNameSnapshot}{deliveryTarget.transportAssignment?.deliveryStationPincodeSnapshot?` (${deliveryTarget.transportAssignment.deliveryStationPincodeSnapshot})`:""}</small>}
               </div>
+              {deliveryTarget.consignmentNote?.cnNumber && (
+                <div className="cnPreviewCard" style={{border:"1px solid var(--line,#d8e0ea)",borderRadius:12,padding:12,marginBottom:12,background:"var(--soft,#f7f9fc)"}}>
+                  <div><strong>SAVED CN DETAILS</strong><span>Previously saved consignment note for this invoice</span></div>
+                  <div className="cnPreviewGrid" style={{display:"flex",gap:16,alignItems:"center",flexWrap:"wrap",marginTop:8}}>
+                    <span><small>CN NUMBER</small><b>{deliveryTarget.consignmentNote.cnNumber}</b></span>
+                    <span><small>CN DATE</small><b>{ymd(deliveryTarget.consignmentNote.cnDate) || "-"}</b></span>
+                    <span><small>CN QTY</small><b>{Number(deliveryTarget.consignmentNote.cnQty || 0)}</b></span>
+                    {deliveryTarget.consignmentNote.imageFileId && <button className="tableClickLink" type="button" onClick={() => openSavedCnImage(deliveryTarget)}>Preview CN Image/PDF</button>}
+                  </div>
+                </div>
+              )}
               <div className="formGrid deliveryFormGrid">
                 <label>Delivered At<input type="datetime-local" value={deliveryForm.deliveredAt} onChange={(e)=>setDeliveryForm((f)=>({...f,deliveredAt:e.target.value}))}/></label>
-                <label>Delivered To *<input value={deliveryForm.deliveredTo} onChange={(e)=>setDeliveryForm((f)=>({...f,deliveredTo:e.target.value}))} placeholder="Receiver name"/></label>
-                <label>Receiver Mobile<input value={deliveryForm.deliveryMobile} onChange={(e)=>setDeliveryForm((f)=>({...f,deliveryMobile:e.target.value}))}/></label>
+                <label>Transporter Name<input value={deliveryForm.transporterName} onChange={(e)=>setDeliveryForm((f)=>({...f,transporterName:e.target.value}))} placeholder="Transporter / delivery service"/></label>
+                <label>No. of Packages<input type="number" min="0" step="1" value={deliveryForm.noOfPackages} onChange={(e)=>setDeliveryForm((f)=>({...f,noOfPackages:e.target.value}))}/></label>
+                <label>CN Date<input type="date" value={deliveryForm.cnDate} onChange={(e)=>setDeliveryForm((f)=>({...f,cnDate:e.target.value}))}/></label>
+                <label>CN Qty<input type="number" min="0" step="1" value={deliveryForm.cnQty} onChange={(e)=>setDeliveryForm((f)=>({...f,cnQty:e.target.value}))}/></label>
+                <label>CN Number<input value={deliveryForm.cnNumber} onChange={(e)=>setDeliveryForm((f)=>({...f,cnNumber:e.target.value}))} placeholder="Consignment note number"/></label>
+                <label>Bilty / LR Number{deliveryNonLocal ? " *" : ""}<input value={deliveryForm.biltyNo} onChange={(e)=>setDeliveryForm((f)=>({...f,biltyNo:e.target.value}))}/></label>
                 <label>Vehicle No.<input value={deliveryForm.vehicleNo} onChange={(e)=>setDeliveryForm((f)=>({...f,vehicleNo:e.target.value.toUpperCase()}))}/></label>
-                <label>Bilty / LR No.{deliveryNonLocal ? " *" : ""}<input value={deliveryForm.biltyNo} onChange={(e)=>setDeliveryForm((f)=>({...f,biltyNo:e.target.value}))}/></label>
-                <label className="wideField">Delivery Details / Remarks<textarea value={deliveryForm.deliveryRemarks} onChange={(e)=>setDeliveryForm((f)=>({...f,deliveryRemarks:e.target.value}))} placeholder="Manual delivery details"/></label>
+                <label className="wideField">Delivery Details / Remarks<textarea value={deliveryForm.deliveryRemarks} onChange={(e)=>setDeliveryForm((f)=>({...f,deliveryRemarks:e.target.value}))} placeholder="Optional dispatch or delivery remarks"/></label>
               </div>
               <div className="deliveryUploadGrid">
-                <label className={deliveryProof ? "fileDrop ready" : "fileDrop"}><UploadCloud/><strong>Delivery Proof *</strong><span>{deliveryProof?.name || "Photo or PDF"}</span><input type="file" accept="image/*,.pdf" onChange={(e)=>setDeliveryProof(e.target.files?.[0]||null)}/></label>
+                <label className={deliveryCnImage ? "fileDrop ready" : "fileDrop"}><UploadCloud/><strong>CN Image / PDF</strong><span>{deliveryCnImage?.name || (deliveryTarget.consignmentNote?.imageFileId ? `Saved: ${deliveryTarget.consignmentNote.imageName || "CN file"} • choose to replace` : "Optional unless CN details are entered")}</span><input type="file" accept="image/*,.pdf,application/pdf" onChange={(e)=>setDeliveryCnImage(e.target.files?.[0]||null)}/></label>
                 <label className={biltyCopy ? "fileDrop ready" : "fileDrop"}><UploadCloud/><strong>Bilty / LR Copy {deliveryNonLocal ? "*" : ""}</strong><span>{biltyCopy?.name || (deliveryNonLocal ? "Required for non-local customer" : "Optional")}</span><input type="file" accept="image/*,.pdf" onChange={(e)=>setBiltyCopy(e.target.files?.[0]||null)}/></label>
               </div>
               <div className="formActions"><button className="btn ghost" type="button" onClick={()=>setDeliveryTarget(null)}>Cancel</button><button className="btn primary" type="button" disabled={deliverySaving} onClick={markDelivered}>{deliverySaving ? "Saving..." : "Delivered + Send Mail"}</button></div>
@@ -1133,7 +1314,27 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         <div className="oldDmsTopLine">
           <label data-invoice-field="buyer" className="od-wide"><span>Buyer / Party *</span><div className="lookupSelectRow"><select value={customerId} onChange={(e) => setCustomerId(e.target.value)}><option value="">Select Buyer / Party</option>{customers.map((c) => <option key={c.globalCustomerId} value={c.globalCustomerId}>{partyOptionLabel(c)}{c.gradeCode ? ` • Grade ${c.gradeCode}` : ""}</option>)}</select><CreateLookupButton to="/dms/customers" label="Create" resource="customer" selectedValue={customerId} onReturn={load} /></div></label>
           <label data-invoice-field="date"><span>Order Date *</span><input type="date" value={header.date} onChange={(e) => setH("date", e.target.value)} /></label>
-          <label data-invoice-field="invoice" className="od-wide"><span>Invoice Number *</span><input value={header.invoiceNo} onChange={(e) => { if (!editId) invoiceNoManuallyEditedRef.current = true; setH("invoiceNo", e.target.value); }} placeholder={nextInvoiceNo || "Invoice Number"} autoComplete="off" /></label>
+          <label data-invoice-field="invoice" className="od-wide">
+            <span>Invoice Number *{!editId && activeInvoiceSeries?.cashInvoice ? " • UNREGISTERED / CASH (C)" : ""}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%" }}>
+              {!editId && invoicePrefix && <strong style={{ whiteSpace: "nowrap", fontSize: "inherit" }}>{invoicePrefix}</strong>}
+              <input
+                style={{ flex: "1 1 90px", minWidth: 60, width: "100%" }}
+                value={header.invoiceNo}
+                inputMode={editId ? undefined : "numeric"}
+                onChange={(e) => {
+                  const value = editId ? e.target.value : e.target.value.replace(/\D/g, "");
+                  if (!editId) invoiceNoManuallyEditedRef.current = true;
+                  setH("invoiceNo", value);
+                }}
+                placeholder={nextInvoiceNo || (editId ? "Invoice Number" : "Number only")}
+                autoComplete="off"
+              />
+              {!editId && invoiceSuffix && <strong style={{ whiteSpace: "nowrap", fontSize: "inherit" }}>{invoiceSuffix}</strong>}
+            </div>
+            {!editId && fullInvoiceNumberPreview && <small>Full printed invoice number: <b>{fullInvoiceNumberPreview}</b></small>}
+            {!editId && customerId && !activeInvoiceSeries && <small>Loading the selected party's invoice series...</small>}
+          </label>
           <label data-invoice-field="warehouse" className="od-warehouse"><span>Warehouse *</span><select value={header.warehouseId || ""} onChange={(e) => setH("warehouseId", e.target.value)}><option value="">Select Warehouse</option>{warehouses.map((w) => <option key={w._id} value={w._id}>{w.title || w.reference || "Warehouse"}</option>)}</select></label>
           {totals.grand > 49999 && <label data-invoice-field="arn"><span>ARN Number *</span><input value={header.arn} onChange={(e) => setH("arn", e.target.value)} /></label>}
 

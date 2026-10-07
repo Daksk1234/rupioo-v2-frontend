@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { getCurrentDatabase, getCurrentUser, getMailStatus } from "../services/smartMailApi";
+import {toHashRouteUrl} from "../lib/appLocation.js";
 
 export default function EmailHealthBanner({ settingsPath = "/app/settings/email-communication" }) {
   const user = useMemo(() => getCurrentUser(), []);
@@ -37,7 +38,7 @@ export default function EmailHealthBanner({ settingsPath = "/app/settings/email-
 
   return (
     <div
-      onClick={() => { window.location.href = settingsPath; }}
+      onClick={() => { window.location.href = toHashRouteUrl(settingsPath); }}
       style={{
         background: bg, color: "#fff", fontWeight: 800, textAlign: "center", padding: "7px 12px",
         cursor: "pointer", position: "relative", zIndex: 9999, animation: "rupioMailPulse 1.4s ease-in-out infinite",

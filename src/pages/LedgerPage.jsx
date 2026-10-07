@@ -10,8 +10,9 @@ import {
 } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import { api, apiBlob, getUser } from "../lib/api.js";
-import { configuredFinancialYear, financialYearOptions } from "../lib/financialYear.js";
+import { currentFinancialYear, financialYearOptions } from "../lib/financialYear.js";
 import { accessForPath } from "../lib/permissionAccess.js";
+import { currentMonthName, FY_MONTHS, monthBounds } from "../lib/periodFilters.js";
 
 const money = (value) => Number(value || 0).toLocaleString("en-IN", {
   minimumFractionDigits: 2,
@@ -58,11 +59,12 @@ const downloadBlob = async (path, fallbackName) => {
 
 export default function LedgerPage({ page }) {
   const access = accessForPath(page?.path || "/dms/ledger");
-  const [fy, setFy] = useState(configuredFinancialYear(getUser()));
+  const [fy, setFy] = useState(currentFinancialYear());
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthName());
   const [options, setOptions] = useState([]);
   const [optionSearch, setOptionSearch] = useState("");
   const [selectedValue, setSelectedValue] = useState("");
-  const [filters, setFilters] = useState({ startDate: "", endDate: "" });
+  const [filters, setFilters] = useState(() => monthBounds(currentFinancialYear(), currentMonthName()));
   const [statement, setStatement] = useState(null);
   const [loading, setLoading] = useState(false);
   const [optionsLoading, setOptionsLoading] = useState(false);
@@ -143,16 +145,15 @@ export default function LedgerPage({ page }) {
 
   const onEntityChange = (value) => {
     setSelectedValue(value);
-    setFilters({ startDate: "", endDate: "" });
     setMessage("");
-    loadStatement({ selectedValue: value, filters: { startDate: "", endDate: "" } });
+    loadStatement({ selectedValue: value, filters });
   };
 
   const onFyChange = (value) => {
     setFy(value);
-    localStorage.setItem("financialYearSelected", value);
-    setFilters({ startDate: "", endDate: "" });
-    if (selectedValue) loadStatement({ fy: value, filters: { startDate: "", endDate: "" } });
+    const nextRange = monthBounds(value, selectedMonth);
+    setFilters(nextRange);
+    if (selectedValue) loadStatement({ fy: value, filters: nextRange });
   };
 
   const fileQuery = () => queryString({
@@ -294,6 +295,13 @@ export default function LedgerPage({ page }) {
                 {years.map((year) => <option key={year}>{year}</option>)}
               </select>
             </label>
+            <label className="oldLedgerField">Month
+              <select value={selectedMonth} onChange={(event) => { const month = event.target.value; setSelectedMonth(month); const nextRange = monthBounds(fy, month); setFilters(nextRange); if (selectedValue) loadStatement({ filters: nextRange }); }}>
+                <option value="ALL">Full Financial Year</option>
+                <option value="CUSTOM">Custom Range</option>
+                {FY_MONTHS.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </label>
             <label className="oldLedgerField party">
               Party / Account
               <div className="oldLedgerSearch">
@@ -320,16 +328,16 @@ export default function LedgerPage({ page }) {
             </label>
             <label className="oldLedgerField">
               Start Date
-              <input type="date" value={filters.startDate} onChange={(event) => setFilters((prev) => ({ ...prev, startDate: event.target.value }))} />
+              <input type="date" value={filters.startDate} onChange={(event) => { setSelectedMonth("CUSTOM"); setFilters((prev) => ({ ...prev, startDate: event.target.value })); }} />
             </label>
             <label className="oldLedgerField">
               End Date
-              <input type="date" value={filters.endDate} onChange={(event) => setFilters((prev) => ({ ...prev, endDate: event.target.value }))} />
+              <input type="date" value={filters.endDate} onChange={(event) => { setSelectedMonth("CUSTOM"); setFilters((prev) => ({ ...prev, endDate: event.target.value })); }} />
             </label>
             <button className="btn primary" onClick={() => loadStatement()} disabled={!selected.entityId || loading}>
               <RefreshCw /> {loading ? "Loading..." : "Apply"}
             </button>
-            <button className="btn ghost" onClick={() => { const reset = { startDate: "", endDate: "" }; setFilters(reset); loadStatement({ filters: reset }); }} disabled={!selected.entityId || loading}>
+            <button className="btn ghost" onClick={() => loadStatement()} disabled={!selected.entityId || loading}>
               <RefreshCw /> Refresh
             </button>
             {access.download && (

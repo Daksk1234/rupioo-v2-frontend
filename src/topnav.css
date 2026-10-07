@@ -586,3 +586,189 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* ---- Persistent module sub-header ---- */
+.globalSubHeader {
+  width: 100%;
+  border-top: 1px solid rgba(236, 238, 245, .95);
+  background: rgba(250, 251, 254, .98);
+}
+
+.globalSubHeaderInner {
+  min-height: 44px;
+  max-width: 1900px;
+  margin: 0 auto;
+  padding: 5px 22px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.subHeaderGroupName {
+  flex: 0 0 auto;
+  padding-right: 10px;
+  border-right: 1px solid #e4e7ef;
+  color: #72768a;
+  font-size: 8px;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.subHeaderTabs {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #d7dbea transparent;
+  padding: 1px 0;
+}
+
+.subHeaderTab,
+.subHeaderCurrentPage {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #666a7f;
+  background: transparent;
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: background .16s ease, border-color .16s ease, color .16s ease;
+}
+
+.subHeaderTab:hover {
+  color: #5558cf;
+  background: #f1f2ff;
+}
+
+.subHeaderTab.active {
+  color: #5053c9;
+  border-color: #dfe1ff;
+  background: #eff0ff;
+}
+
+.subHeaderCurrentPage {
+  color: #83879a;
+}
+
+.subHeaderFinancialYear {
+  flex: 0 0 auto;
+  min-width: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.subHeaderFinancialYear > span {
+  color: #85899b;
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .05em;
+}
+
+.subHeaderFinancialYear select {
+  height: 30px;
+  min-width: 88px;
+  margin: 0;
+  padding: 0 24px 0 8px;
+  border: 1px solid #dde0ea;
+  border-radius: 8px;
+  outline: 0;
+  background: #fff;
+  color: #3f4259;
+  font: inherit;
+  font-size: 8px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.subHeaderFinancialYear select:focus {
+  border-color: #aeb2f6;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, .08);
+}
+
+@media (max-width: 1100px) {
+  .globalSubHeaderInner {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .subHeaderGroupName {
+    display: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .globalSubHeaderInner {
+    min-height: 42px;
+    padding: 5px 10px;
+    gap: 7px;
+  }
+
+  .subHeaderTab,
+  .subHeaderCurrentPage {
+    min-height: 28px;
+    padding: 0 8px;
+    font-size: 7px;
+  }
+
+  .subHeaderFinancialYear {
+    min-width: auto;
+  }
+
+  .subHeaderFinancialYear > span {
+    display: none;
+  }
+
+  .subHeaderFinancialYear select {
+    min-width: 80px;
+    height: 28px;
+    font-size: 7px;
+  }
+}
+
+/* Reports-only control that lives beside the report category subtabs. */
+.subHeaderReportToggle {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  margin: 0;
+  padding: 0 8px;
+  border-left: 1px solid #e4e7ef;
+  color: #777b8f;
+  font-size: 7px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.subHeaderReportToggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #6264df;
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .subHeaderReportToggle span { display: none; }
+  .subHeaderReportToggle { padding: 0 5px; }
+}

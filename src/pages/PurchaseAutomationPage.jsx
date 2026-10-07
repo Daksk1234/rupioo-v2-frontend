@@ -1,13 +1,17 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { BrainCircuit, Boxes, ClipboardList, FileSearch, RefreshCw, Send, ShoppingBasket, Truck, AlertTriangle, CheckCircle2, Copy, X, Upload, IndianRupee, PackageCheck, Pencil, Save } from "lucide-react";
+import { BrainCircuit, Boxes, ClipboardList, FileSearch, RefreshCw, Send, ShoppingBasket, Truck, AlertTriangle, CheckCircle2, Copy, X, Upload, IndianRupee, PackageCheck, Pencil, Save, Trash2 } from "lucide-react";
 import { api, getUser } from "../lib/api.js";
-import { configuredFinancialYear } from "../lib/financialYear.js";
+import { currentFinancialYear, financialYearOptions } from "../lib/financialYear.js";
 import "../purchase-ai.css";
 
 const money = (v) => `₹${Number(v || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 const dt = (v) => v ? new Date(v).toLocaleString("en-IN") : "—";
 const d = (v) => v ? new Date(v).toLocaleDateString("en-IN") : "—";
 const n = (v) => Number(v || 0);
+const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const fyMonthOrder = ["April", "May", "June", "July", "August", "September", "October", "November", "December", "January", "February", "March"];
+const currentMonthName = () => monthNames[new Date().getMonth()];
+const monthBounds = (fy, monthName) => { const startYear = Number(String(fy || "").slice(0, 4)); const monthIndex = monthNames.indexOf(monthName); if (!Number.isFinite(startYear)) return { fromDate: "", toDate: "" }; if (monthName === "ALL") return { fromDate: `${startYear}-04-01`, toDate: `${startYear+1}-03-31` }; if (monthIndex < 0) return { fromDate: "", toDate: "" }; const year = monthIndex >= 3 ? startYear : startYear + 1; const mm = String(monthIndex + 1).padStart(2, "0"); const last = String(new Date(year, monthIndex + 1, 0).getDate()).padStart(2, "0"); return { fromDate: `${year}-${mm}-01`, toDate: `${year}-${mm}-${last}` }; };
 const statusLabel = (v) => String(v || "").replaceAll("_", " ");
 const tabs = [
   ["ORDER_SHEET", "Order Sheet", ClipboardList],
@@ -24,7 +28,8 @@ function Modal({ children, onClose, small = false }) {
 
 export default function PurchaseAutomationPage({ initialTab = "ORDER_SHEET" }) {
   const user = getUser();
-  const fy = configuredFinancialYear(user);
+  const [fy, setFy] = useState(currentFinancialYear());
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthName());
   const [tab, setTab] = useState(initialTab);
   const [dashboard, setDashboard] = useState({});
   const [requirements, setRequirements] = useState([]);
@@ -48,11 +53,12 @@ export default function PurchaseAutomationPage({ initialTab = "ORDER_SHEET" }) {
 
   const load = async () => {
     try {
+      const { fromDate, toDate } = monthBounds(fy, selectedMonth);
       const [dash, reqs, r, p, inc, g, c, a] = await Promise.all([
         api("/purchase-ai/dashboard").catch(() => ({})),
         api("/purchase-ai/requirements").catch(() => []),
         api("/purchase-ai/rfqs").catch(() => []),
-        api("/purchase-ai/purchase-orders").catch(() => []),
+        api(`/purchase-ai/purchase-orders?financialYear=${encodeURIComponent(fy)}&fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}`).catch(() => []),
         api("/purchase-ai/incoming").catch(() => []),
         api("/purchase-ai/grns").catch(() => []),
         api("/purchase-ai/complaints").catch(() => []),
@@ -62,7 +68,7 @@ export default function PurchaseAutomationPage({ initialTab = "ORDER_SHEET" }) {
     } catch (e) { setMsg(e.message); }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [fy, selectedMonth]);
   useEffect(() => { setTab(initialTab); }, [initialTab]);
 
   const scanStock = async () => {
@@ -105,6 +111,17 @@ export default function PurchaseAutomationPage({ initialTab = "ORDER_SHEET" }) {
     setBusy(true); try { const r = await api(`/purchase-ai/rfqs/${rfq._id}/award`, { method: "POST", body: JSON.stringify({ vendorGlobalId: vendor.vendorGlobalId, reason: `Selected from quotation comparison score ${vendor.comparisonScore || 0}.`, deliveryLocation, requiredByDate }) }); setMsg(`PO ${r.purchaseOrder?.poNo || "created"}.`); setTab("PO"); await load(); } catch (e) { setMsg(e.message); } finally { setBusy(false); }
   };
 
+  const deletePurchaseOrder = async (po) => {
+    if (!window.confirm(`Permanently delete Purchase Order ${po.poNo}? This removes the PO document from the database and cannot be undone.`)) return;
+    setBusy(true); setMsg("");
+    try {
+      await api(`/purchase-ai/purchase-orders/${po._id}`, { method: "DELETE" });
+      setMsg(`Purchase Order ${po.poNo} permanently deleted.`);
+      await load();
+    } catch (e) { setMsg(e.message); }
+    finally { setBusy(false); }
+  };
+
   const openGrn = (po) => {
     const shipment = po.shipments?.[po.shipments.length - 1] || {};
     setGrnPo(po);
@@ -135,7 +152,7 @@ export default function PurchaseAutomationPage({ initialTab = "ORDER_SHEET" }) {
   return <div className="purchase-ai">
     <div className="pa-head">
       <div className="pa-title"><BrainCircuit size={24}/><div><h1>Purchase AI Control Center</h1><div className="pa-muted">Trend trigger → smart order sheet → multi-vendor RFQ → PO → dispatch → QC → OTP inward → accounts</div></div></div>
-      <div className="pa-actions"><span className="pa-badge blue">FY {fy}</span><button className="pa-btn" onClick={load}><RefreshCw size={15}/>Refresh</button><button className="pa-btn primary" disabled={busy} onClick={scanStock}><BrainCircuit size={15}/>{busy ? "Working…" : "Run AI Stock Scan"}</button></div>
+      <div className="pa-actions"><select className="pa-input" value={fy} onChange={(e)=>setFy(e.target.value)}>{financialYearOptions(user,{count:8,extra:[currentFinancialYear()]}).map(x=><option key={x} value={x}>FY {x}</option>)}</select><select className="pa-input" value={selectedMonth} onChange={(e)=>setSelectedMonth(e.target.value)}><option value="ALL">Full FY</option>{fyMonthOrder.map(m=><option key={m} value={m}>{m}</option>)}</select><button className="pa-btn" onClick={load}><RefreshCw size={15}/>Refresh</button><button className="pa-btn primary" disabled={busy} onClick={scanStock}><BrainCircuit size={15}/>{busy ? "Working…" : "Run AI Stock Scan"}</button></div>
     </div>
 
     {msg && <div className="pa-msg">{msg}</div>}
@@ -164,7 +181,7 @@ export default function PurchaseAutomationPage({ initialTab = "ORDER_SHEET" }) {
 
     {tab === "RFQ" && <div className="pa-stack">{rfqs.map((r) => <div className="pa-panel" key={r._id}><div className="pa-head"><div><b>{r.rfqNo}</b> <span className="pa-badge blue">{statusLabel(r.status)}</span><div className="pa-muted">Created {dt(r.createdAt)} • Required {d(r.requiredByDate)}</div></div><div>{(r.items||[]).length} products</div></div><div className="pa-table-wrap"><table className="pa-table"><thead><tr><th>Supplier</th><th>Status</th><th>Quote</th><th>Landed Total</th><th>Credit</th><th>AI Comparison</th><th>Action</th></tr></thead><tbody>{(r.vendors||[]).map((v)=><tr key={v._id || v.vendorGlobalId}><td><b>{v.vendorName}</b><div>{v.contact?.mobile}</div><div>{v.contact?.email}</div></td><td>{statusLabel(v.status)}</td><td>{v.quoteNo || "—"}<div>{d(v.quoteDate)}</div></td><td>{v.status === "SUBMITTED" ? money(v.landedTotal) : "—"}</td><td>{n(v.creditDays)} days</td><td>{v.status === "SUBMITTED" ? <><b>{n(v.comparisonScore).toFixed(1)}/100</b><div className="pa-muted">{(v.comparisonReasons||[]).join(" • ")}</div></> : "Waiting"}</td><td><div className="pa-inline"><button className="pa-btn" onClick={()=>copyVendorLink(v.vendorGlobalId)}><Copy size={13}/>Portal</button>{v.status === "SUBMITTED" && r.status !== "AWARDED" && <button className="pa-btn good" onClick={()=>award(r,v)}><CheckCircle2 size={13}/>Award</button>}</div></td></tr>)}</tbody></table></div></div>)}{!rfqs.length && <div className="pa-panel">No RFQs yet. Generate an order sheet and send it to suppliers.</div>}</div>}
 
-    {tab === "PO" && <div className="pa-table-wrap"><table className="pa-table"><thead><tr><th>PO</th><th>Supplier</th><th>Status</th><th>Amount</th><th>Confirmation</th><th>Dispatch</th><th>Vendor Portal</th></tr></thead><tbody>{pos.map((po)=><tr key={po._id}><td><b>{po.poNo}</b><div className="pa-muted">{po.rfqNo}</div></td><td>{po.vendorName}<div>{po.vendorContact?.mobile}</div></td><td><span className="pa-badge blue">{statusLabel(po.status)}</span></td><td>{money(po.grandTotal)}</td><td>{po.supplierConfirmation?.confirmedAt ? <><b>{d(po.supplierConfirmation.expectedDispatchDate)}</b><div>{po.supplierConfirmation.expectedDispatchTime}</div></> : "Waiting supplier"}</td><td>{(po.shipments||[]).length ? (po.shipments||[]).map((s)=><div key={s._id}>{s.lrNo || s.shipmentNo} • {s.packages} pkg • {d(s.dispatchDate)}</div>) : "Not dispatched"}</td><td><button className="pa-btn" onClick={()=>copyVendorLink(po.vendorGlobalId)}><Copy size={13}/>Copy Link</button></td></tr>)}{!pos.length&&<tr><td colSpan="7">No purchase orders yet.</td></tr>}</tbody></table></div>}
+    {tab === "PO" && <div className="pa-table-wrap"><table className="pa-table"><thead><tr><th>PO</th><th>Supplier</th><th>Status</th><th>Amount</th><th>Confirmation</th><th>Dispatch</th><th>Vendor Portal</th></tr></thead><tbody>{pos.map((po)=><tr key={po._id}><td><b>{po.poNo}</b><div className="pa-muted">{po.rfqNo}</div></td><td>{po.vendorName}<div>{po.vendorContact?.mobile}</div></td><td><span className="pa-badge blue">{statusLabel(po.status)}</span></td><td>{money(po.grandTotal)}</td><td>{po.supplierConfirmation?.confirmedAt ? <><b>{d(po.supplierConfirmation.expectedDispatchDate)}</b><div>{po.supplierConfirmation.expectedDispatchTime}</div></> : "Waiting supplier"}</td><td>{(po.shipments||[]).length ? (po.shipments||[]).map((s)=><div key={s._id}>{s.lrNo || s.shipmentNo} • {s.packages} pkg • {d(s.dispatchDate)}</div>) : "Not dispatched"}</td><td><div className="pa-actions"><button className="pa-btn" onClick={()=>copyVendorLink(po.vendorGlobalId)}><Copy size={13}/>Copy Link</button><button className="pa-btn" disabled={busy} onClick={()=>deletePurchaseOrder(po)}><Trash2 size={13}/>Delete</button></div></td></tr>)}{!pos.length&&<tr><td colSpan="7">No purchase orders yet.</td></tr>}</tbody></table></div>}
 
     {tab === "GRN" && <div className="pa-stack"><div className="pa-panel"><b>Incoming Shipments</b><div className="pa-table-wrap" style={{marginTop:8}}><table className="pa-table"><thead><tr><th>PO</th><th>Supplier</th><th>LR / Transporter</th><th>Packages</th><th>Expected</th><th>Action</th></tr></thead><tbody>{incoming.map((po)=>{const s=po.shipments?.[po.shipments.length-1]||{};return <tr key={po._id}><td>{po.poNo}</td><td>{po.vendorName}</td><td>{s.lrNo||"—"}<div>{s.transporterName||"—"}</div></td><td>{s.packages||0}</td><td>{dt(s.expectedArrival)}</td><td><button className="pa-btn primary" onClick={()=>openGrn(po)}><PackageCheck size={14}/>Receive / QC</button></td></tr>})}</tbody></table></div></div><div className="pa-panel"><b>GRN / QC Queue</b><div className="pa-table-wrap" style={{marginTop:8}}><table className="pa-table"><thead><tr><th>GRN</th><th>PO</th><th>Supplier</th><th>Packages</th><th>QC</th><th>Variance</th><th>Action</th></tr></thead><tbody>{grns.map((g)=>{const variance=(g.items||[]).reduce((s,i)=>s+n(i.damagedQty)+n(i.rejectedQty)+n(i.shortQty)+n(i.wrongProductQty),0);return <tr key={g._id}><td>{g.grnNo}</td><td>{g.poNo}</td><td>{g.vendorName}</td><td>{g.receivedPackages}/{g.dispatchedPackages}</td><td>{statusLabel(g.qcStatus)}</td><td>{variance}</td><td>{g.qcStatus==="IN_PROGRESS"&&<button className="pa-btn good" onClick={()=>qcComplete(g)}>Complete QC + OTP</button>}{g.qcStatus==="INWARD_PENDING"&&<button className="pa-btn primary" onClick={()=>{setOtpGrn(g);setOtpCode("")}}>Enter Warehouse OTP</button>}</td></tr>})}</tbody></table></div></div></div>}
 

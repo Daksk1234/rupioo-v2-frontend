@@ -1,6 +1,7 @@
 import React from "react";
 import {getUser} from "../lib/api.js";
 import {accessForPath} from "../lib/permissionAccess.js";
+import {getAppPathname} from "../lib/appLocation.js";
 import { Download, Filter, MoreHorizontal, Plus, Upload } from "lucide-react";
 
 export default function PageHeader({
@@ -16,7 +17,7 @@ export default function PageHeader({
   addLabel = "Add",
 }) {
   const user=getUser();
-  const path=typeof window!=="undefined"?window.location.pathname:"";
+  const path=getAppPathname();
   const assigned=user?.role==="MASTER"?accessForPath(path):user?.pageAccess?.[path];
   const canCreate=!assigned||Boolean(assigned.create);
   const canDownload=!assigned||Boolean(assigned.download);

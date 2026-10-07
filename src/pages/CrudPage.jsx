@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Pencil,
   Trash2,
@@ -12,7 +12,9 @@ import {
 import PageHeader from "../components/PageHeader.jsx";
 import DataTable from "../components/DataTable.jsx";
 import BulkTools from "../components/BulkTools.jsx";
-import { api } from "../lib/api.js";
+import { api, getUser } from "../lib/api.js";
+import { currentFinancialYear, financialYearOptions, initialDateForFinancialYear } from "../lib/financialYear.js";
+import { FY_MONTHS, currentMonthName, monthBounds } from "../lib/periodFilters.js";
 import { fieldsFor, resourceName } from "../config/resourceSchemas.js";
 
 const masterMap = {
@@ -145,6 +147,11 @@ export default function CrudPage({ page }) {
   const fields = fieldsFor(page),
     blank = useMemo(() => emptyFrom(fields), [page.path]),
     bulk = bulkConfig(page, fields);
+  const isDatedResource = page.app !== "master" && !masterMap[page.path] && fields.some((field) => field.key === "date");
+  const [financialYear, setFinancialYear] = useState(currentFinancialYear()),
+    [selectedMonth, setSelectedMonth] = useState(currentMonthName());
+  const fyOptions = financialYearOptions(getUser(), { count: 10, extra: [financialYear] });
+  const requestSequence = useRef(0);
   const [rows, setRows] = useState([]),
     [q, setQ] = useState(""),
     [filter, setFilter] = useState(""),
@@ -158,6 +165,7 @@ export default function CrudPage({ page }) {
     [meta, setMeta] = useState({ page: 1, pages: 1, total: 0 });
   const endpoint = endpointFor(page);
   const load = async (nextPage = pageNo) => {
+    const requestId = ++requestSequence.current;
     setLoading(true);
     try {
       const sep = endpoint.includes("?") ? "&" : "?";
@@ -165,17 +173,20 @@ export default function CrudPage({ page }) {
         filter && page.path !== "/master/hsn"
           ? `&status=${encodeURIComponent(filter)}`
           : "";
+      const period = isDatedResource ? monthBounds(financialYear, selectedMonth) : null;
+      const periodQuery = period ? `&fromDate=${encodeURIComponent(period.startDate)}&toDate=${encodeURIComponent(period.endDate)}` : "";
       const data = await api(
-        `${endpoint}${sep}q=${encodeURIComponent(q)}&page=${nextPage}&limit=50${statusQuery}`,
+        `${endpoint}${sep}q=${encodeURIComponent(q)}&page=${nextPage}&limit=50${statusQuery}${periodQuery}`,
       );
+      if (requestId !== requestSequence.current) return;
       const items = Array.isArray(data) ? data : data.items || [];
       setRows(items.map((r) => normalize(page, r)));
       setMeta(data.meta || { page: nextPage, pages: 1, total: items.length });
       setPageNo(data.meta?.page || nextPage);
     } catch (e) {
-      setMessage(e.message);
+      if (requestId === requestSequence.current) setMessage(e.message);
     } finally {
-      setLoading(false);
+      if (requestId === requestSequence.current) setLoading(false);
     }
   };
   useEffect(() => {
@@ -185,10 +196,10 @@ export default function CrudPage({ page }) {
     setSelected([]);
     setPageNo(1);
     load(1);
-  }, [page.path, filter]);
+  }, [page.path, filter, financialYear, selectedMonth]);
   const openNew = () => {
     setEdit(null);
-    setForm(blank);
+    setForm(isDatedResource ? { ...blank, date: initialDateForFinancialYear(financialYear) } : blank);
     setShow(true);
     setMessage("");
   };
@@ -383,6 +394,17 @@ export default function CrudPage({ page }) {
       )}
       <section className="panel">
         <div className="toolbar">
+          {isDatedResource && (
+            <>
+              <label>FY <select value={financialYear} onChange={(e) => setFinancialYear(e.target.value)}>
+                {fyOptions.map((year) => <option key={year} value={year}>{year}</option>)}
+              </select></label>
+              <label>Month <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}>
+                <option value="ALL">Full FY</option>
+                {FY_MONTHS.map((month) => <option key={month} value={month}>{month}</option>)}
+              </select></label>
+            </>
+          )}
           <div className="searchBox">
             <Search size={16} />
             <input

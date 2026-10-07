@@ -1,4 +1,5 @@
 import React from "react";
+import {toHashRouteUrl} from "../lib/appLocation.js";
 
 export function openMasterEdit({to,id,resource="",code=""}={}){
   if(!to || (!id && !code)) return;
@@ -8,7 +9,7 @@ export function openMasterEdit({to,id,resource="",code=""}={}){
     if(resource)url.searchParams.set("resource",resource);
     if(id)url.searchParams.set("edit",String(id));
     if(code)url.searchParams.set("editCode",String(code));
-    const w=window.open(url.toString(),"_blank");
+    const w=window.open(toHashRouteUrl(`${url.pathname}${url.search}`),"_blank");
     if(!w) window.alert?.("Please allow pop-ups for this DMS site to edit the selected record.");
   }catch{}
 }

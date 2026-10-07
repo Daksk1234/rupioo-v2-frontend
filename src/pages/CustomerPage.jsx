@@ -35,7 +35,7 @@ import {
   normalizeIfsc,
 } from "../lib/ifscLookup.js";
 import { accessForPath } from "../lib/permissionAccess.js";
-import { configuredFinancialYear } from "../lib/financialYear.js";
+import { currentFinancialYear } from "../lib/financialYear.js";
 
 const digits = (v) => String(v || "").replace(/\D/g, "");
 const cityKey = (v) =>
@@ -50,7 +50,7 @@ const needsTransport = (customerCity, firmCity) =>
     cityKey(firmCity) &&
     cityKey(customerCity) !== cityKey(firmCity),
   );
-const currentFY = () => configuredFinancialYear(getUser());
+const currentFY = () => currentFinancialYear();
 const gstTypeFromApi = (value) => {
   const type = String(value || "").trim().toUpperCase();
   if (type.includes("COMPOS")) return "COMPOSITION";

@@ -13,8 +13,9 @@ import {
 } from "lucide-react";
 import Logo from "./Logo.jsx";
 import UiPersonalizer from "./UiPersonalizer.jsx";
-import StorageHealthBanner from "./StorageHealthBanner.jsx";
+import ColumnStudio from "./ColumnStudio.jsx";
 import { nav } from "../config/modules.js";
+import { configuredFinancialYear, financialYearOptions, normalizeFinancialYear } from "../lib/financialYear.js";
 import {
   clearSession,
   getUser,
@@ -24,14 +25,29 @@ import {
 } from "../lib/api.js";
 import "../topnav.css";
 import "../smart-ui.css";
+import "../accessibility.css";
 
 const MAX_DESKTOP_GROUPS = 7;
 const PERMISSION_EXEMPT_PATHS = new Set(["/profile", "/no-access", "/storage-settings", "/master/storage-connection"]);
 const SALES_WITH_PRODUCT_PATH = "/dms/list-of-sales-with-product";
 const SALES_INVOICE_PATH = "/dms/sales-invoices";
+const REPORT_CENTER_PATH = "/dms/reports";
+const REPORT_CENTER_SUBTABS = [
+  { key: "GST", label: "GST" },
+  { key: "SALES", label: "SALES" },
+  { key: "PURCHASES", label: "PURCHASES" },
+  { key: "STOCK", label: "STOCK" },
+  { key: "FINANCE", label: "FINANCE" },
+  { key: "BOOKS", label: "BOOK OF ACCOUNTS" },
+  { key: "CUSTOMER", label: "CUSTOMER" },
+  { key: "MANAGEMENT", label: "MANAGEMENT" },
+];
 
 function canViewPath(pageAccess = {}, path = "") {
   if (pageAccess?.[path]?.view === true) return true;
+  if (path === "/dms/all-reports") {
+    return pageAccess?.["/dms/reports"]?.view === true;
+  }
   // This report is a child view of Sales Invoices. Existing companies/plans
   // should not need a new permission assignment just to make the menu visible.
   if (path === SALES_WITH_PRODUCT_PATH) {
@@ -54,6 +70,17 @@ export default function AppShell({ children, appKey }) {
   const [aiOpen, setAiOpen] = useState(false);
   const [noticeOpen, setNoticeOpen] = useState(false);
   const [liveBrief, setLiveBrief] = useState([]);
+  const [globalFinancialYear, setGlobalFinancialYear] = useState(() => {
+    const sessionUser = getUser();
+    const stored = normalizeFinancialYear(
+      typeof window !== "undefined" ? window.localStorage.getItem("rupioo.globalFinancialYear") : "",
+    );
+    return stored || configuredFinancialYear(sessionUser);
+  });
+  const [reportMonthlyExpandable, setReportMonthlyExpandable] = useState(() => {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem("rupioo.reportMonthlyExpandable") !== "false";
+  });
 
   useEffect(() => {
     let active = true;
@@ -136,10 +163,64 @@ export default function AppShell({ children, appKey }) {
   const activeGroup = useMemo(
     () =>
       visibleGroups.find((group) =>
-        group.items.some((item) => item.path === location.pathname)
+        group.items.some(
+          (item) =>
+            item.path === location.pathname ||
+            location.pathname.startsWith(`${item.path}/`),
+        ),
       )?.group,
-    [visibleGroups, location.pathname]
+    [visibleGroups, location.pathname],
   );
+
+  const activeSubnavGroup = useMemo(
+    () => visibleGroups.find((group) => group.group === activeGroup) || null,
+    [visibleGroups, activeGroup],
+  );
+
+  const isReportCenter = location.pathname === REPORT_CENTER_PATH;
+  const activeReportCenterGroup = useMemo(() => {
+    const requested = new URLSearchParams(location.search).get("group");
+    const normalized = String(requested || "GST").toUpperCase();
+    return REPORT_CENTER_SUBTABS.some((item) => item.key === normalized)
+      ? normalized
+      : "GST";
+  }, [location.search]);
+
+  const financialYears = useMemo(
+    () => financialYearOptions(user, { count: 10, extra: [globalFinancialYear] }),
+    [user, globalFinancialYear],
+  );
+
+  const changeGlobalFinancialYear = (value) => {
+    const next = normalizeFinancialYear(value);
+    if (!next) return;
+    setGlobalFinancialYear(next);
+    try {
+      window.localStorage.setItem("rupioo.globalFinancialYear", next);
+      window.dispatchEvent(
+        new CustomEvent("rupioo:financial-year-change", {
+          detail: { financialYear: next },
+        }),
+      );
+    } catch {
+      // The selector still works visually if browser storage is unavailable.
+    }
+  };
+
+  const changeReportMonthlyExpandable = (checked) => {
+    const next = Boolean(checked);
+    setReportMonthlyExpandable(next);
+    try {
+      window.localStorage.setItem("rupioo.reportMonthlyExpandable", String(next));
+      window.dispatchEvent(
+        new CustomEvent("rupioo:report-monthly-expandable-change", {
+          detail: { checked: next },
+        }),
+      );
+    } catch {
+      // Keep the control usable even if browser storage is unavailable.
+    }
+  };
 
   const primaryGroups = useMemo(
     () => visibleGroups.slice(0, MAX_DESKTOP_GROUPS),
@@ -544,13 +625,82 @@ export default function AppShell({ children, appKey }) {
             ))}
           </div>
         )}
-      </header>
 
-      <StorageHealthBanner />
+        <div className="globalSubHeader">
+          <div className="globalSubHeaderInner">
+            <div className="subHeaderGroupName">
+              {activeSubnavGroup?.group || (appKey === "master" ? "MASTER" : "DMS")}
+            </div>
+
+            <nav className="subHeaderTabs" aria-label="Current module pages">
+              {isReportCenter
+                ? REPORT_CENTER_SUBTABS.map((item) => (
+                    <NavLink
+                      key={item.key}
+                      to={`${REPORT_CENTER_PATH}?group=${encodeURIComponent(item.key)}`}
+                      className={() =>
+                        `subHeaderTab ${item.key === activeReportCenterGroup ? "active" : ""}`
+                      }
+                    >
+                      {item.label}
+                    </NavLink>
+                  ))
+                : (activeSubnavGroup?.items || []).map((item) => (
+                    <NavLink
+                      key={item.path}
+                      to={item.path}
+                      className={({ isActive }) =>
+                        `subHeaderTab ${isActive ? "active" : ""}`
+                      }
+                    >
+                      {item.label}
+                    </NavLink>
+                  ))}
+              {!isReportCenter && !activeSubnavGroup && (
+                <span className="subHeaderCurrentPage">
+                  {location.pathname === "/profile"
+                    ? "PROFILE"
+                    : location.pathname.includes("storage")
+                      ? "STORAGE & BACKUP"
+                      : "CURRENT PAGE"}
+                </span>
+              )}
+            </nav>
+
+            {isReportCenter && (
+              <label className="subHeaderReportToggle">
+                <input
+                  type="checkbox"
+                  checked={reportMonthlyExpandable}
+                  onChange={(event) => changeReportMonthlyExpandable(event.target.checked)}
+                />
+                <span>MONTHLY EXPANDABLE ROWS</span>
+              </label>
+            )}
+
+            {appKey !== "master" && (
+              <label className="subHeaderFinancialYear">
+                <span>FINANCIAL YEAR</span>
+                <select
+                  value={globalFinancialYear}
+                  onChange={(event) => changeGlobalFinancialYear(event.target.value)}
+                >
+                  {financialYears.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+        </div>
+      </header>
 
       <main className="topNavContent">
         <div className="content">{children}</div>
       </main>
+      <ColumnStudio routeKey={location.pathname} />
     </div>
   );
 }

@@ -3,17 +3,19 @@ import { RefreshCw,FileSpreadsheet,Printer,Mail,Send } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import DataTable from "../components/DataTable.jsx";
 import { api, getUser } from "../lib/api.js";
-import { configuredFinancialYear, financialYearOptions } from "../lib/financialYear.js";
+import { currentFinancialYear, financialYearOptions } from "../lib/financialYear.js";
 import { accessForPath } from "../lib/permissionAccess.js";
 import { isAdminUser } from "../lib/adminVisibility.js";
 import { fetchTransactionParties, partyOptionLabel } from "../lib/partyDirectory.js";
+import { currentMonthName, FY_MONTHS, monthBounds } from "../lib/periodFilters.js";
 
 const esc=v=>String(v??"").replaceAll('"','""');
 const PROFIT_SENSITIVE=/(profit|margin|trading|break-even|company health)/i;
 
 export default function LiveReportPage({page}){
   const user=getUser();
-  const[fy,setFy]=useState(configuredFinancialYear(user));
+  const[fy,setFy]=useState(currentFinancialYear());
+  const[selectedMonth,setSelectedMonth]=useState(currentMonthName());
   const fyYears=financialYearOptions(user,{count:8,extra:[fy]});
   const[data,setData]=useState({rows:[],summary:{}});
   const[loading,setLoading]=useState(false);
@@ -35,7 +37,8 @@ export default function LiveReportPage({page}){
     setLoading(true);setMsg("");
     try{
       const partyQuery=isLedger&&partyId?`&partyGlobalId=${encodeURIComponent(partyId)}`:"";
-      setData(await api(`/reports/run?name=${encodeURIComponent(page.label)}&financialYear=${encodeURIComponent(fy)}${partyQuery}`))
+      const {startDate,endDate}=monthBounds(fy,selectedMonth);
+      setData(await api(`/reports/run?name=${encodeURIComponent(page.label)}&financialYear=${encodeURIComponent(fy)}&startDate=${startDate}&endDate=${endDate}${partyQuery}`))
     }
     catch(e){setMsg(e.message)}
     finally{setLoading(false)}
@@ -44,7 +47,7 @@ export default function LiveReportPage({page}){
   useEffect(()=>{
     if(isLedger){fetchTransactionParties(200).then(setParties).catch(()=>setParties([]));}
     load();
-  },[page.path]);
+  },[page.path,fy,selectedMonth]);
 
   useEffect(()=>{if(isLedger)load()},[partyId]);
 
@@ -60,7 +63,8 @@ export default function LiveReportPage({page}){
     if(!partyId){setMsg("Select a party before sending ledger mail");return;}
     setSendingLedger(true);setMsg("");
     try{
-      const result=await api("/reports/ledger/email",{method:"POST",body:JSON.stringify({financialYear:fy,partyGlobalId:partyId})});
+      const {startDate,endDate}=monthBounds(fy,selectedMonth);
+      const result=await api("/reports/ledger/email",{method:"POST",body:JSON.stringify({financialYear:fy,partyGlobalId:partyId,startDate,endDate})});
       setMsg(`Ledger sent by email${result?.to?` to ${result.to}`:""}.`);
     }catch(e){setMsg(e.message)}finally{setSendingLedger(false)}
   };
@@ -92,6 +96,7 @@ export default function LiveReportPage({page}){
             {fyYears.map(x=><option key={x}>{x}</option>)}
           </select>
         </label>
+        <label>Month <select value={selectedMonth} onChange={e=>setSelectedMonth(e.target.value)}><option value="ALL">Full FY</option>{FY_MONTHS.map(m=><option key={m}>{m}</option>)}</select></label>
         {isLedger&&<label className="ledgerPartySelector" style={{fontSize:9,fontWeight:700}}>Party
           <select value={partyId} onChange={e=>setPartyId(e.target.value)}><option value="">Select Customer / Supplier</option>{parties.map(p=><option key={p.globalCustomerId} value={p.globalCustomerId}>{partyOptionLabel(p)}</option>)}</select>
         </label>}

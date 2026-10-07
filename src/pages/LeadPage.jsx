@@ -7,6 +7,7 @@ import BulkTools from "../components/BulkTools.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import EditMasterLink from "../components/EditMasterLink.jsx";
 import {api,getUser} from "../lib/api.js";
+import {toHashRouteUrl} from "../lib/appLocation.js";
 
 const blank={companyName:"",contactPerson:"",mobile:"",whatsapp:"",email:"",address:"",pincode:"",city:"",state:"",source:"",sourceReference:"",productInterest:"",priority:"NORMAL",nextFollowUpAt:""};
 const bulkFields=[
@@ -99,7 +100,7 @@ export default function LeadPage(){
  const getGeo=()=>navigator.geolocation?.getCurrentPosition(p=>setActivityForm(f=>({...f,latitude:String(p.coords.latitude),longitude:String(p.coords.longitude),accuracy:String(p.coords.accuracy||"")})),e=>setResult({error:e.message}),{enableHighAccuracy:true});
  const saveVisit=async()=>{try{await api(`/leads/${detail.lead._id}/visit`,{method:"POST",body:JSON.stringify({...activityForm,stage:"VISITED"})});setActivityMode("");await refreshDetail();await load()}catch(e){setResult({error:e.message})}};
  const cancelLead=async()=>{try{if(!activityForm.reason.trim())throw new Error("Cancellation reason is required");await api(`/leads/${detail.lead._id}/cancel`,{method:"POST",body:JSON.stringify({reason:activityForm.reason,note:activityForm.note})});setActivityMode("");await refreshDetail();await load()}catch(e){setResult({error:e.message})}};
- const convert=async()=>{try{const d=await api(`/leads/${detail.lead._id}/start-conversion`,{method:"POST",body:"{}"});window.location.href=d.customerUrl||`/dms/customers?leadId=${encodeURIComponent(detail.lead.leadId)}`}catch(e){setResult({error:e.message})}};
+ const convert=async()=>{try{const d=await api(`/leads/${detail.lead._id}/start-conversion`,{method:"POST",body:"{}"});window.location.href=toHashRouteUrl(d.customerUrl||`/dms/customers?leadId=${encodeURIComponent(detail.lead.leadId)}`)}catch(e){setResult({error:e.message})}};
  const toggle=id=>setSelected(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);const toggleAll=(checked,ids)=>setSelected(s=>checked?[...new Set([...s,...ids])]:s.filter(x=>!ids.includes(x)));
  const stageCount=k=>Number(stats?.counts?.[k]||0);
  const applyPreset=(preset)=>{let next={stage:"",quality:"",due:""};if(preset==="OVERDUE")next.due="OVERDUE";if(preset==="MISSING_MOBILE")next.quality="MISSING_MOBILE";if(preset==="UNASSIGNED")next.stage="NEW";if(preset==="CUSTOMER")next.stage="CUSTOMER";setStage(next.stage);setQuality(next.quality);setDue(next.due);load(1,next)};

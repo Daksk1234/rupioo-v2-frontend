@@ -20,13 +20,15 @@ const DENSITIES = [
 
 const DEFAULTS = {
   theme: "comfort",
-  fontScale: 0.96,
+  fontScale: 1,
+  fontPt: 10,
   density: "compact",
 };
 
 function readPreferences() {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") };
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+    return { ...DEFAULTS, ...saved, fontPt: Math.min(18, Math.max(10, Number(saved.fontPt) || 10)) };
   } catch {
     return DEFAULTS;
   }
@@ -36,7 +38,8 @@ function applyPreferences(prefs) {
   const root = document.documentElement;
   root.dataset.uiTheme = prefs.theme;
   root.dataset.uiDensity = prefs.density;
-  root.style.setProperty("--ui-font-scale", String(prefs.fontScale));
+  root.style.setProperty("--ui-font-scale", String(Math.max(1, prefs.fontScale)));
+  root.style.setProperty("--ui-min-font", `${Math.min(18, Math.max(10, Number(prefs.fontPt) || 10))}pt`);
 }
 
 export default function UiPersonalizer() {
@@ -57,7 +60,7 @@ export default function UiPersonalizer() {
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
-  const fontPercent = useMemo(() => Math.round(prefs.fontScale * 100), [prefs.fontScale]);
+  const fontPoints = useMemo(() => Math.min(18, Math.max(10, Number(prefs.fontPt) || 10)), [prefs.fontPt]);
 
   const reset = () => setPrefs(DEFAULTS);
 
@@ -67,8 +70,8 @@ export default function UiPersonalizer() {
         className={`topIconButton uiPersonalizerButton ${open ? "active" : ""}`}
         type="button"
         onClick={() => setOpen((value) => !value)}
-        aria-label="Customize interface"
-        title="Customize interface"
+        aria-label="Font size and appearance settings"
+        title="Font size and appearance settings"
       >
         <Palette size={18} />
       </button>
@@ -113,22 +116,24 @@ export default function UiPersonalizer() {
           <section className="uiControlSection">
             <div className="uiControlTitle">
               <span><Type size={15} /> Font size</span>
-              <small>{fontPercent}%</small>
+              <small>{fontPoints} pt · minimum 10 pt</small>
             </div>
             <div className="fontScaleRow">
               <span>A</span>
               <input
                 type="range"
-                min="0.82"
-                max="1.18"
-                step="0.02"
-                value={prefs.fontScale}
+                min="10"
+                max="18"
+                step="1"
+                value={fontPoints}
+                aria-label="Font size in points"
                 onChange={(event) => setPrefs((value) => ({
-                  ...value,
-                  fontScale: Number(event.target.value),
+                  ...value, fontPt: Number(event.target.value), fontScale: 1,
                 }))}
               />
               <strong>A</strong>
+              <button type="button" aria-label="Decrease font size" disabled={fontPoints <= 10} onClick={() => setPrefs((value) => ({ ...value, fontPt: Math.max(10, fontPoints - 1) }))}>A−</button>
+              <button type="button" aria-label="Increase font size" disabled={fontPoints >= 18} onClick={() => setPrefs((value) => ({ ...value, fontPt: Math.min(18, fontPoints + 1) }))}>A+</button>
             </div>
           </section>
 

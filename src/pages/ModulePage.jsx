@@ -8,6 +8,7 @@ import LeadPage from "./LeadPage.jsx";
 import TargetPage from "./TargetPage.jsx";
 import PricingPage from "./PricingPage.jsx";
 import ReportsPage from "./ReportsPage.jsx";
+import ReportCenterPage from "./ReportCenterPage.jsx";
 import DashboardPage from "./DashboardPage.jsx";
 import PlanPage from "./PlanPage.jsx";
 import SalesInvoicePage from "./SalesInvoicePage.jsx";
@@ -59,6 +60,7 @@ export default function ModulePage({page}){
  if(page.kind==="leads")return <LeadPage/>;
  if(page.kind==="target")return <TargetPage/>;
  if(page.kind==="pricing")return <PricingPage/>;
+ if(page.kind==="report-center")return <ReportCenterPage/>;
  if(page.kind==="reports")return <ReportsPage/>;
  if(page.kind==="plans")return <PlanPage/>;
  if(page.kind==="sales-invoices")return <SalesInvoicePage/>;

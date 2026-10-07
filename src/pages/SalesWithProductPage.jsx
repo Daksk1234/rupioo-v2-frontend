@@ -1,8 +1,9 @@
 import React, { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api, getUser } from "../lib/api.js";
+import { localToday } from "../lib/financialYear.js";
 import "../sales-with-product.css";
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = localToday;
 const clean = (value) => String(value ?? "").trim();
 const upper = (value) => clean(value).toUpperCase();
 const money = (value) => Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });

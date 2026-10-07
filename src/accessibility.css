@@ -1,0 +1,36 @@
+/* V2 ACCESSIBILITY — screen-only minimum 10pt, user-adjustable 10–18pt.
+   Overrides older page-specific 7–12px sizes without modifying invoice/PDF printing. */
+@media screen {
+  :root { --ui-min-font: 10pt; }
+  html { font-size: var(--ui-min-font) !important; }
+  body, #root { font-size: var(--ui-min-font) !important; }
+  #root :is(div, span, p, label, small, b, strong, em, i, a, button, input, textarea,
+            select, option, th, td, caption, li, legend, summary, footer, header,
+            section, article, nav, time) {
+    font-size: var(--ui-min-font) !important;
+    line-height: 1.35;
+  }
+  #root :is(h1, h2, h3, h4, h5, h6) { line-height: 1.3; }
+  #root svg text { font-size: var(--ui-min-font) !important; }
+  #root h1 { font-size: max(20pt, var(--ui-min-font)) !important; }
+  #root h2 { font-size: max(16pt, var(--ui-min-font)) !important; }
+  #root h3 { font-size: max(13pt, var(--ui-min-font)) !important; }
+  #root h4, #root h5, #root h6 { font-size: max(11pt, var(--ui-min-font)) !important; }
+  /* Preserve larger KPI/total typography instead of shrinking it to the text minimum. */
+  #root :is(.metricValue, .healthScore, .donutCenter strong, .bankSummaryStrip strong,
+            .yearTarget strong, .summaryCards strong, .summaryCard strong, .oldDmsGrandTotal,
+            .oldDmsTotals .grand, .gst-stat strong, .insightCount, .invoiceGrandTotal) {
+    font-size: max(17pt, var(--ui-min-font)) !important;
+    line-height: 1.2;
+  }
+  #root :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea, button) {
+    min-height: 34px; max-width: 100%;
+  }
+  #root :is(.toolbar, .oldDmsToolbar, .noteToolbar, .topNavMain, .fontScaleRow) { flex-wrap: wrap; }
+  #root :is(.tableWrap, .smartTableWrap, .oldDmsTableWrap, .noteItemsWrap) { max-width: 100%; overflow-x: auto; }
+  #root :is(.uiPersonalizerPanel, .uiPersonalizerPanel *) { line-height: 1.4; }
+  @media (max-width: 760px) {
+    #root :is(.toolbar, .oldDmsToolbar, .noteToolbar) { gap: 8px; }
+    #root :is(.content, .pageContent, .moduleContent) { min-width: 0; }
+  }
+}

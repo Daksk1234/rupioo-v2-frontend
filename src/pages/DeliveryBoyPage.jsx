@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { Camera, CheckCircle2, LocateFixed, MapPin, Navigation, PackageCheck, Phone, RefreshCw, RotateCcw, Truck, XCircle } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import { api, getUser } from "../lib/api.js";
-import { configuredFinancialYear, financialYearOptions } from "../lib/financialYear.js";
+import { currentFinancialYear, financialYearOptions } from "../lib/financialYear.js";
 
 const upper = (v) => String(v || "").trim().toUpperCase();
 const doneStatuses = new Set(["DELIVERED", "HANDED_TO_TRANSPORTER", "RETURNED_TO_WAREHOUSE", "SKIPPED"]);
@@ -38,7 +38,7 @@ export default function DeliveryBoyPage() {
   const user = getUser() || {};
   const userId = String(user._id || user.id || user.userId || "");
   const admin = ["MASTER", "SUPERADMIN"].includes(upper(user.role));
-  const [fy, setFy] = useState(params.get("financialYear") || configuredFinancialYear(user));
+  const [fy, setFy] = useState(params.get("financialYear") || currentFinancialYear());
   const [runs, setRuns] = useState([]);
   const [run, setRun] = useState(null);
   const [msg, setMsg] = useState("");

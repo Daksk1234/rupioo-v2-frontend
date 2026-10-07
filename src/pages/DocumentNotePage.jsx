@@ -6,8 +6,9 @@ import StatusBadge from "../components/StatusBadge.jsx";
 import { api, apiBlob, getUser } from "../lib/api.js";
 import { fetchTransactionParties, partyOptionLabel } from "../lib/partyDirectory.js";
 import { buildInvoiceTaxSummary, computeInvoiceAdjustments } from "../lib/invoiceAdjustments.js";
-import { configuredFinancialYear, financialYearFromDate, financialYearOptions, initialDateForFinancialYear } from "../lib/financialYear.js";
+import { configuredFinancialYear, currentFinancialYear, financialYearFromDate, financialYearOptions, initialDateForFinancialYear } from "../lib/financialYear.js";
 import "../document-notes.css";
+import { inPeriod, currentMonthName, FY_MONTHS as PERIOD_MONTHS } from "../lib/periodFilters.js";
 
 const round2 = (n) => Number((Number(n) || 0).toFixed(2));
 const money = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -81,8 +82,9 @@ export default function DocumentNotePage({ documentType = "CREDIT_NOTE" }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const editId = searchParams.get("edit") || "";
   const createMode = searchParams.get("create") === "1" || Boolean(editId);
-  const [fy, setFy] = useState(searchParams.get("financialYear") || configuredFinancialYear(sessionUser));
-  const [listFy, setListFy] = useState("ALL");
+  const [fy, setFy] = useState(searchParams.get("financialYear") || currentFinancialYear());
+  const [listFy, setListFy] = useState(currentFinancialYear());
+  const [listMonth, setListMonth] = useState(currentMonthName());
   const [parties, setParties] = useState([]);
   const [products, setProducts] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
@@ -177,7 +179,7 @@ export default function DocumentNotePage({ documentType = "CREDIT_NOTE" }) {
     setNumberError("");
     setForm((old) => ({ ...old, documentNo: "" }));
 
-    api(`/transactions/${cfg.endpoint}/next-number?financialYear=${encodeURIComponent(numberFy)}`)
+    api(`/transactions/${cfg.endpoint}/next-number?financialYear=${encodeURIComponent(numberFy)}${form.partyGlobalId ? `&partyGlobalId=${encodeURIComponent(form.partyGlobalId)}` : ""}`)
       .then((next) => {
         if (!active) return;
         if (next?.documentNo) {
@@ -195,7 +197,7 @@ export default function DocumentNotePage({ documentType = "CREDIT_NOTE" }) {
       });
 
     return () => { active = false; };
-  }, [cfg.endpoint, cfg.prefix, createMode, documentType, editId, form.date, fy]);
+  }, [cfg.endpoint, cfg.prefix, createMode, documentType, editId, form.date, form.partyGlobalId, fy]);
 
   useEffect(() => {
     let active = true;
@@ -308,6 +310,7 @@ export default function DocumentNotePage({ documentType = "CREDIT_NOTE" }) {
       const doc = await api(editId ? `/transactions/${cfg.endpoint}/${encodeURIComponent(editId)}` : `/transactions/${cfg.endpoint}`, { method: editId ? "PUT" : "POST", body: JSON.stringify(payload) });
       setMsg(`${cfg.title} ${doc.documentNo || doc.creditNoteNo || ""} ${doc.status === "DRAFT" ? "saved as draft" : "issued"}`);
       setSearchParams({ financialYear: postingFy });
+      setListFy(postingFy);
       setForm(defaultForm(documentType, postingFy)); setRows([newRow()]);
       await load();
     } catch (e) { setMsg(e.message); }
@@ -351,8 +354,8 @@ export default function DocumentNotePage({ documentType = "CREDIT_NOTE" }) {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return documents.filter((d) => !q || [d.documentNo, d.creditNoteNo, d.partyNameSnapshot, d.customerNameSnapshot, d.referenceDocumentNo, d.invoiceNo, d.reason, d.reasonType, d.status].some((v) => String(v || "").toLowerCase().includes(q)));
-  }, [documents, search]);
+    return documents.filter((d) => (listFy === "ALL" || d.financialYear === listFy) && (listMonth === "ALL" || inPeriod(d.date || d.createdAt, d.financialYear || fy, listMonth)) && (!q || [d.documentNo, d.creditNoteNo, d.partyNameSnapshot, d.customerNameSnapshot, d.referenceDocumentNo, d.invoiceNo, d.reason, d.reasonType, d.status].some((v) => String(v || "").toLowerCase().includes(q))));
+  }, [documents, search, listFy, listMonth, fy]);
   const grouped = useMemo(() => {
     const map = new Map();
     filtered.forEach((d) => {
@@ -368,7 +371,7 @@ export default function DocumentNotePage({ documentType = "CREDIT_NOTE" }) {
     <PageHeader title={`${cfg.title}s`} description={cfg.description} onAdd={() => { const createFy = listFy === "ALL" ? configuredFinancialYear(sessionUser) : listFy; setFy(createFy); setForm(defaultForm(documentType, createFy)); setRows([newRow()]); setSearchParams({ create: "1", financialYear: createFy }); }} addLabel={`CREATE ${cfg.title.toUpperCase()}`} actions />
     {msg && <div className="resultBanner">{msg}</div>}
     <section className="panel noteListPanel">
-      <div className="noteToolbar"><div className="oldDmsSearch"><Search size={15}/><input placeholder={`Search ${cfg.title}...`} value={search} onChange={(e) => setSearch(e.target.value)}/></div><label><span>FY</span><select value={listFy} onChange={(e) => setListFy(e.target.value)}><option value="ALL">All Financial Years</option>{fyOptions.map((x) => <option key={x}>{x}</option>)}</select></label><button className="oldDmsIconBtn" onClick={load} title="Refresh"><RefreshCw size={15}/></button></div>
+      <div className="noteToolbar"><div className="oldDmsSearch"><Search size={15}/><input placeholder={`Search ${cfg.title}...`} value={search} onChange={(e) => setSearch(e.target.value)}/></div><label><span>FY</span><select value={listFy} onChange={(e) => setListFy(e.target.value)}><option value="ALL">All Financial Years</option>{fyOptions.map((x) => <option key={x}>{x}</option>)}</select></label><label><span>Month</span><select value={listMonth} onChange={(e) => setListMonth(e.target.value)}><option value="ALL">All Months</option>{PERIOD_MONTHS.map((m) => <option key={m}>{m}</option>)}</select></label><button className="oldDmsIconBtn" onClick={load} title="Refresh"><RefreshCw size={15}/></button></div>
       {!grouped.length && <div className="noteEmpty">No {cfg.title.toLowerCase()} found.</div>}
       {grouped.map((group) => {
         const open = monthOpen[group.key] === true;

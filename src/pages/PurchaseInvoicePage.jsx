@@ -20,7 +20,8 @@ import CreateLookupButton from "../components/CreateLookupButton.jsx";
 import { api, getUser } from "../lib/api.js";
 import { fetchTransactionParties, partyGstin, partyOptionLabel } from "../lib/partyDirectory.js";
 import { buildInvoiceTaxSummary, calculateOldDmsLanded, computeInvoiceAdjustments } from "../lib/invoiceAdjustments.js";
-import { configuredFinancialYear, currentFinancialYear, financialYearFromDate, financialYearOptions, initialDateForFinancialYear } from "../lib/financialYear.js";
+import { currentFinancialYear, financialYearFromDate, financialYearOptions, initialDateForFinancialYear, localToday } from "../lib/financialYear.js";
+import { monthBounds } from "../lib/periodFilters.js";
 
 const round2 = (n) => Number((Number(n) || 0).toFixed(2));
 const money = (n) => `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -119,21 +120,22 @@ export default function PurchaseInvoicePage({ embedded = false, batchIndex = 1, 
   // Keep the raw Basic Total text separate while a user is editing it.
   // This prevents recalculation renders from pushing the caret to the end.
   const [basicTotalEdit, setBasicTotalEdit] = useState(null);
-  const [fy, setFy] = useState(searchParams.get("financialYear") || configuredFinancialYear(sessionUser));
+  const [fy, setFy] = useState(searchParams.get("financialYear") || currentFinancialYear());
   const [editSourceFinancialYear, setEditSourceFinancialYear] = useState("");
-  const [listFy, setListFy] = useState("ALL");
+  const [listFy, setListFy] = useState(currentFinancialYear());
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
-  const [periodType, setPeriodType] = useState("YEARLY");
+  const [periodType, setPeriodType] = useState("MONTHLY");
   const [selectedMonth, setSelectedMonth] = useState(fyMonthOrder[new Date().getMonth() >= 3 ? new Date().getMonth() - 3 : new Date().getMonth() + 9] || "April");
   const [selectedQuarter, setSelectedQuarter] = useState("Q1");
   const [selectedHalf, setSelectedHalf] = useState("H1");
-  const [monthOpen, setMonthOpen] = useState({});
+  const [monthOpen, setMonthOpen] = useState(() => ({ [monthNames[new Date().getMonth()]]: true }));
   const [batchOpen, setBatchOpen] = useState(true);
   const [extraInvoiceKeys, setExtraInvoiceKeys] = useState([]);
   const [batchSaving, setBatchSaving] = useState(false);
   const batchSaveRefs = useRef(new Map());
+  const orderNowPrefillApplied = useRef(false);
   const registerBatchSave = useCallback((key, fn) => {
     if (!key) return;
     if (typeof fn === "function") batchSaveRefs.current.set(key, fn);
@@ -155,7 +157,7 @@ export default function PurchaseInvoicePage({ embedded = false, batchIndex = 1, 
 
   const [header, setHeader] = useState({
     invoiceNo: "",
-    date: initialDateForFinancialYear(fy),
+    date: isEdit ? initialDateForFinancialYear(fy) : localToday(),
     supplierName: "",
     supplierGstin: "",
     supplierGlobalId: "",
@@ -193,7 +195,7 @@ export default function PurchaseInvoicePage({ embedded = false, batchIndex = 1, 
     try {
       const invoiceYears = !createMode ? (listFy === "ALL" ? buildFinancialYears(10) : [listFy]) : [fy];
       const invoicePromise = Promise.all(invoiceYears.map((year) =>
-        fetchAllPaged(`/transactions/purchase-invoices?financialYear=${encodeURIComponent(year)}`, 100).catch(() => [])
+        fetchAllPaged(`/transactions/purchase-invoices?financialYear=${encodeURIComponent(year)}${!createMode && listFy !== "ALL" && periodType === "MONTHLY" ? `&fromDate=${monthBounds(listFy, selectedMonth).startDate}&toDate=${monthBounds(listFy, selectedMonth).endDate}` : ""}`, 100).catch(() => [])
       )).then((groups) => groups.flat());
       const [p, partyList, inv] = await Promise.all([
         fetchAllPaged("/products?status=ACTIVE", 100),
@@ -279,7 +281,7 @@ export default function PurchaseInvoicePage({ embedded = false, batchIndex = 1, 
     }
   };
 
-  useEffect(() => { load(); }, [fy, listFy, createMode]);
+  useEffect(() => { load(); }, [fy, listFy, createMode, periodType, selectedMonth]);
   useEffect(() => { loadInvoiceForEdit(); }, [editId, fy]);
   useEffect(() => {
     if (!isEdit || !products.length) return;
@@ -339,6 +341,26 @@ export default function PurchaseInvoicePage({ embedded = false, batchIndex = 1, 
       rate,
     }) : row));
   };
+
+  useEffect(() => {
+    if (embedded || isEdit || !createMode || orderNowPrefillApplied.current) return;
+    const prefillProductId = searchParams.get("prefillProductId") || "";
+    const prefillSupplierGlobalId = searchParams.get("prefillSupplierGlobalId") || "";
+    const prefillRateRaw = searchParams.get("prefillRate");
+    if (!prefillProductId && !prefillSupplierGlobalId) return;
+    if (prefillProductId && !products.length) return;
+    if (prefillSupplierGlobalId && !parties.length) return;
+
+    orderNowPrefillApplied.current = true;
+    if (prefillSupplierGlobalId) selectSupplier(prefillSupplierGlobalId);
+    if (prefillProductId) {
+      selectProduct(0, prefillProductId);
+      const prefillRate = Number(prefillRateRaw);
+      if (Number.isFinite(prefillRate) && prefillRate >= 0) {
+        setRows((list) => list.map((row, index) => index === 0 ? recalc({ ...row, rate: prefillRate }) : row));
+      }
+    }
+  }, [embedded, isEdit, createMode, products, parties, searchParams]);
 
   const changeRow = (index, key, value) => setRows((list) => list.map((row, i) => i === index ? recalc({ ...row, [key]: value }) : row));
   const changeGross = (index, gross) => setRows((list) => list.map((row, i) => i === index ? recalc({ ...row, grossQty: gross, qty: round2(Number(gross || 0) * Number(row.qtyInBag || 1)) }) : row));
@@ -458,6 +480,11 @@ export default function PurchaseInvoicePage({ embedded = false, batchIndex = 1, 
           sourceFinancialYear: sourceFy,
           billDiscount: totals.discountTotal,
           otherCharges: totals.chargesTotal,
+          // Never silently save figures that differ from what the user sees.
+          expectedSubtotal: totals.lineSubtotal,
+          expectedTaxableTotal: totals.taxable,
+          expectedTaxTotal: totals.tax,
+          expectedGrandTotal: totals.grand,
           adjustments: adjustmentCalc.applied.map((a) => ({
             id: a.id,
             masterId: a.masterId || "",
@@ -547,13 +574,13 @@ export default function PurchaseInvoicePage({ embedded = false, batchIndex = 1, 
 
   const deleteInvoice = async (invoice) => {
     if (!invoice?._id) return;
-    const yes = window.confirm(`Delete Purchase Invoice ${invoice.invoiceNo || ""}? Stock and accounting will be reversed.`);
+    const yes = window.confirm(`Permanently delete Purchase Invoice ${invoice.invoiceNo || ""}? The invoice document will be removed from the database. Stock and accounting will be reversed. This cannot be undone.`);
     if (!yes) return;
     try {
       setLoading(true);
       const invoiceFy = invoice?.financialYear || financialYearFromDate(invoice?.date) || (listFy !== "ALL" ? listFy : fy);
       await api(`/transactions/purchase-invoices/${encodeURIComponent(invoice._id)}?financialYear=${encodeURIComponent(invoiceFy)}`, { method: "DELETE" });
-      setMsg(`Purchase Invoice ${invoice.invoiceNo || ""} deleted. Stock and accounting reversed.`);
+      setMsg(`Purchase Invoice ${invoice.invoiceNo || ""} permanently deleted. Stock and accounting reversed.`);
       await load();
     } catch (e) {
       setMsg(e.message || "Purchase invoice could not be deleted");
@@ -586,53 +613,103 @@ export default function PurchaseInvoicePage({ embedded = false, batchIndex = 1, 
     const head = ["Invoice No.","Date","Supplier / Party","User Name","GSTIN","Taxable","GST","Landed Price","Grand Total","Status","Financial Year"];
     const lines = filteredInvoices.map((r) => [
       r.invoiceNo || "", ymd(r.date || r.createdAt), r.partyNameDisplay || r.supplierNameSnapshot || "",
-      r.userNameDisplay || r.createdByNameSnapshot || "", r.supplierGstinSnapshot || "", Number(r.taxableTotal || r.subtotal || 0).toFixed(2),
+      r.userNameDisplay || r.createdByNameSnapshot || "", r.supplierGstinSnapshot || "", Number(r.taxableTotal ?? r.subtotal ?? 0).toFixed(2),
       Number(r.taxTotal || 0).toFixed(2), Number(invoiceLandedPrice(r) || 0).toFixed(2), Number(r.grandTotal || 0).toFixed(2), r.status || "", r.financialYear || ""
     ]);
     const csv=[head,...lines].map(row=>row.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n");
     const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`Purchase_Invoices_${listFy}.csv`;a.click();URL.revokeObjectURL(url);
   };
 
-  const groupedByMonth = useMemo(() => {
+  const groupedRows = useMemo(() => {
     const groups = new Map();
     filteredInvoices.forEach((row) => {
       const d = new Date(row.date || row.createdAt || 0);
-      const month = Number.isNaN(d.getTime()) ? "Unknown" : monthNames[d.getMonth()];
-      const rowFy = row.financialYear || fy;
+      if (Number.isNaN(d.getTime())) return;
+      const month = monthNames[d.getMonth()];
+      const rowFy = row.financialYear || financialYearFromDate(row.date || row.createdAt) || fy;
       const key = listFy === "ALL" ? `${rowFy}__${month}` : month;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(row);
+      const label = listFy === "ALL" ? `${month} • FY ${rowFy}` : month;
+      if (!groups.has(key)) groups.set(key, { key, month, label, rows: [] });
+      groups.get(key).rows.push(row);
     });
-    return Array.from(groups.entries()).sort((a, b) => {
-      const [afy, am] = a[0].includes("__") ? a[0].split("__") : [listFy, a[0]];
-      const [bfy, bm] = b[0].includes("__") ? b[0].split("__") : [listFy, b[0]];
-      if (afy !== bfy) return Number(bfy?.slice(0,4)||0)-Number(afy?.slice(0,4)||0);
-      return fyMonthOrder.indexOf(am) - fyMonthOrder.indexOf(bm);
-    });
+    return Array.from(groups.values())
+      .sort((a, b) => {
+        const ay = Number(String(a.rows[0]?.financialYear || financialYearFromDate(a.rows[0]?.date) || 0).slice(0, 4));
+        const by = Number(String(b.rows[0]?.financialYear || financialYearFromDate(b.rows[0]?.date) || 0).slice(0, 4));
+        if (ay !== by) return by - ay;
+        return fyMonthOrder.indexOf(a.month) - fyMonthOrder.indexOf(b.month);
+      })
+      .map((group) => ({
+        ...group,
+        rows: group.rows.sort((a, b) => new Date(b.date || b.createdAt || 0) - new Date(a.date || a.createdAt || 0)),
+      }));
   }, [filteredInvoices, listFy, fy]);
+
+  useEffect(() => {
+    if (!groupedRows.length) return;
+    setMonthOpen((previous) => {
+      const next = { ...previous };
+      groupedRows.forEach((group) => {
+        if (next[group.key] === undefined) next[group.key] = periodType === "MONTHLY";
+      });
+      return next;
+    });
+  }, [groupedRows, periodType]);
+
+  const listTotals = useMemo(() => filteredInvoices.reduce((totals, row) => {
+    const tax = purchaseTaxSplit(row);
+    return {
+      igst: totals.igst + tax.igst,
+      cgst: totals.cgst + tax.cgst,
+      sgst: totals.sgst + tax.sgst,
+      landedExpenses: totals.landedExpenses + Number(row.landedCharges || 0),
+      taxable: totals.taxable + Number(row.taxableTotal ?? row.subtotal ?? 0),
+      billCharges: totals.billCharges + Number(row.otherCharges || 0),
+      roundOff: totals.roundOff + Number(row.roundOff || 0),
+      grand: totals.grand + Number(row.grandTotal || 0),
+    };
+  }, { igst: 0, cgst: 0, sgst: 0, landedExpenses: 0, taxable: 0, billCharges: 0, roundOff: 0, grand: 0 }), [filteredInvoices]);
+
+  const openCreatePurchase = () => {
+    const createFy = listFy === "ALL" ? currentFinancialYear() : listFy;
+    setFy(createFy);
+    setSearchParams({ financialYear: createFy, create: "1" });
+  };
 
   if (!createMode) {
     return <>
-      <PageHeader title="Purchase Invoice" description="Old-DMS style purchase invoice list" actions={false} />
+      <PageHeader title="Purchase Invoice" description="Old-DMS style purchase invoice list" onAdd={openCreatePurchase} addLabel="CREATE PURCHASE INVOICE" actions />
       {msg && <div className={`resultBanner ${messageIsSuccess ? "good" : "bad"}`}>{msg}</div>}
       <section className="panel oldDmsSalesList oldDmsPurchaseList">
-        <div className="oldDmsListToolbar">
-          <div className="oldDmsSearch"><Search size={14}/><input placeholder="Search invoice / supplier" value={search} onChange={(e) => setSearch(e.target.value)} /></div>
-          <label><span>FY</span><select value={listFy} onChange={(e) => setListFy(e.target.value)}><option value="ALL">All Financial Years</option>{buildFinancialYears(10).map((x)=><option key={x} value={x}>{x}</option>)}</select></label>
-          <label><span>View</span><select value={periodType} onChange={(e) => setPeriodType(e.target.value)}><option value="MONTHLY">Monthly</option><option value="QUARTERLY">Quarterly</option><option value="HALF_YEARLY">Half Yearly</option><option value="YEARLY">Yearly</option></select></label>
-          {periodType === "MONTHLY" && <label><span>Month</span><select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}>{fyMonthOrder.map((m) => <option key={m}>{m}</option>)}</select></label>}
-          {periodType === "QUARTERLY" && <label><span>Quarter</span><select value={selectedQuarter} onChange={(e) => setSelectedQuarter(e.target.value)}><option>Q1</option><option>Q2</option><option>Q3</option><option>Q4</option></select></label>}
-          {periodType === "HALF_YEARLY" && <label><span>Half</span><select value={selectedHalf} onChange={(e) => setSelectedHalf(e.target.value)}><option value="H1">H1</option><option value="H2">H2</option></select></label>}
-          <button className="oldDmsIconAction" title="Refresh" onClick={load}><RefreshCw size={14}/></button>
-          <button className="oldDmsIconAction" title="Export CSV" onClick={downloadPurchaseCsv}><Download size={14}/></button>
-          <button className="oldDmsCreateIcon" title="Create Purchase Invoice" onClick={() => { const createFy = listFy === "ALL" ? configuredFinancialYear(sessionUser) : listFy; setFy(createFy); setSearchParams({ financialYear: createFy, create: "1" }); }}><Plus size={16}/></button>
+        <div className="oldDmsToolbar">
+          <div className="oldDmsSearch"><Search size={15}/><input placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} /></div>
+          <label className="oldDmsField"><span>FY</span><select value={listFy} onChange={(e) => setListFy(e.target.value)}><option value="ALL">All Financial Years</option>{buildFinancialYears(10).map((x)=><option key={x} value={x}>FY {x}</option>)}</select></label>
+          <label className="oldDmsField"><span>Period</span><select value={periodType} onChange={(e) => setPeriodType(e.target.value)}><option value="MONTHLY">Monthly</option><option value="QUARTERLY">Quarterly</option><option value="HALF_YEARLY">Half Yearly</option><option value="YEARLY">Yearly</option></select></label>
+          {periodType === "MONTHLY" && <label className="oldDmsField"><span>Month</span><select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}>{fyMonthOrder.map((m) => <option key={m}>{m}</option>)}</select></label>}
+          {periodType === "QUARTERLY" && <label className="oldDmsField"><span>Quarter</span><select value={selectedQuarter} onChange={(e) => setSelectedQuarter(e.target.value)}><option value="Q1">Q1 (Apr-Jun)</option><option value="Q2">Q2 (Jul-Sep)</option><option value="Q3">Q3 (Oct-Dec)</option><option value="Q4">Q4 (Jan-Mar)</option></select></label>}
+          {periodType === "HALF_YEARLY" && <label className="oldDmsField"><span>Half</span><select value={selectedHalf} onChange={(e) => setSelectedHalf(e.target.value)}><option value="H1">H1 (Apr-Sep)</option><option value="H2">H2 (Oct-Mar)</option></select></label>}
+          <span className="oldDmsCount">{filteredInvoices.length}</span>
+          <button className="oldDmsIconBtn" title="Refresh" onClick={load}><RefreshCw size={15}/></button>
+          <button className="oldDmsIconBtn" title="Export CSV" onClick={downloadPurchaseCsv}><Download size={15}/></button>
         </div>
-        <div className="oldDmsPeriodSummary"><span>{filteredInvoices.length} invoices</span><b>{money(filteredInvoices.reduce((s, r) => s + Number(r.grandTotal || 0), 0))}</b></div>
-        {groupedByMonth.map(([month, list]) => {
-          const open = monthOpen[month] === true;
-          return <div className="oldDmsMonthGroup" key={month}><button className="oldDmsMonthHead" onClick={() => setMonthOpen((x) => ({ ...x, [month]: !open }))}>{open ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}<b>{month.includes("__") ? `${month.split("__")[1]} • FY ${month.split("__")[0]}` : month}</b><span>{list.length}</span><strong>{money(list.reduce((s, r) => s + Number(r.grandTotal || 0), 0))}</strong></button>{open && <PurchaseListTable rows={list} onEdit={openEdit} onDelete={deleteInvoice} partyMap={partyMap}/>}</div>;
-        })}
-        {!groupedByMonth.length && <div className="oldDmsEmpty">No purchase invoice found for this period.</div>}
+
+        <div className="oldDmsTableWrap">
+          <table className="oldDmsInvoiceListTable oldDmsPurchaseLegacyTable">
+            <thead><tr><th>#</th><th>Status</th><th>Invoice No.</th><th>Date</th><th>Contact</th><th>Company / Actions</th><th>Owner</th><th>User Name</th><th>Builty No.</th><th>Packages</th><th>Vehicle No.</th><th>IGST</th><th>CGST</th><th>SGST</th><th>Landed Expenses</th><th>Taxable Value</th><th>Bill Charges</th><th>Round Off</th><th>Landed Price</th><th>Grand Total</th><th>Actions</th></tr></thead>
+            <tbody>
+              {!groupedRows.length && <tr><td colSpan="21" className="oldDmsEmpty">No purchase invoice found for this period.</td></tr>}
+              {groupedRows.map((group) => (
+                <React.Fragment key={group.key}>
+                  <tr className="oldDmsMonthRow" onClick={() => setMonthOpen((previous) => ({ ...previous, [group.key]: !previous[group.key] }))}>
+                    <td colSpan="21"><span>{monthOpen[group.key] ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}<b>{group.label}</b><small>{group.rows.length} invoice{group.rows.length === 1 ? "" : "s"} • {money(group.rows.reduce((sum, row) => sum + Number(row.grandTotal || 0), 0))}</small></span></td>
+                  </tr>
+                  {monthOpen[group.key] && <PurchaseListRows rows={group.rows} onEdit={openEdit} onDelete={deleteInvoice} partyMap={partyMap}/>} 
+                </React.Fragment>
+              ))}
+            </tbody>
+            <tfoot><tr><td colSpan="11">TOTAL</td><td>{money(listTotals.igst)}</td><td>{money(listTotals.cgst)}</td><td>{money(listTotals.sgst)}</td><td>{money(listTotals.landedExpenses)}</td><td>{money(listTotals.taxable)}</td><td>{money(listTotals.billCharges)}</td><td>{money(listTotals.roundOff)}</td><td></td><td>{money(listTotals.grand)}</td><td></td></tr></tfoot>
+          </table>
+        </div>
       </section>
     </>;
   }
@@ -750,12 +827,34 @@ function purchaseTaxSplit(r) {
   return inter ? {cgst:0,sgst:0,igst:tax} : {cgst:tax/2,sgst:tax/2,igst:0};
 }
 
-function PurchaseListTable({ rows, onEdit, onDelete, partyMap }) {
-  return <div className="oldDmsInvoiceTableWrap"><table className="oldDmsInvoiceTable oldDmsPurchaseLegacyTable"><thead><tr><th>S.No</th><th>Status</th><th>Invoice No.</th><th>Date</th><th>Contact</th><th>Company</th><th>Owner</th><th>User Name</th><th>Builty No.</th><th>Packages</th><th>Vehicle No.</th><th>IGST</th><th>CGST</th><th>SGST</th><th>Additional Charges</th><th>Amount</th><th>Charges</th><th>Round Off</th><th>Landed Price</th><th>Grand Total</th><th>Actions</th></tr></thead><tbody>{!rows.length && <tr><td colSpan="21" className="oldDmsEmpty">No purchase invoices in this period.</td></tr>}{rows.map((r,i) => {
+function PurchaseListRows({ rows, onEdit, onDelete, partyMap }) {
+  return <>{rows.map((r, i) => {
     const party = partyMap?.get(String(r.supplierGlobalId || "")) || {};
     const tax = purchaseTaxSplit(r);
     const contact = party.contactNumber || party.mobileNumber || party.phone || "-";
     const owner = party.ownerName || party.contactPerson || "-";
-    return <tr key={r._id || r.invoiceNo}><td>{i+1}</td><td><StatusBadge value={r.status || "POSTED"}/></td><td><button className="tableClickLink" onClick={() => onEdit?.(r)}>{r.invoiceNo || "-"}</button></td><td>{ymd(r.date)}</td><td>{contact}</td><td><EditMasterLink to="/dms/customers" id={r.supplierGlobalId} resource="customer">{r.partyNameDisplay || r.supplierNameSnapshot || "Supplier"}</EditMasterLink></td><td>{owner}</td><td>{r.userNameDisplay || r.createdByNameSnapshot || "—"}</td><td>{r.builtyNumber || r.BuiltyNumber || r.biltyNo || "-"}</td><td>{r.noOfPackages || r.NoOfPackage || "-"}</td><td>{r.vehicleNo || r.vehicleNumber || "-"}</td><td>{money(tax.igst)}</td><td>{money(tax.cgst)}</td><td>{money(tax.sgst)}</td><td>{money(r.landedCharges || 0)}</td><td>{money(r.subtotal || 0)}</td><td>{money(r.otherCharges || 0)}</td><td>{money(r.roundOff || 0)}</td><td><b title={landedPriceBreakdown(r) || "Landed price"}>{Array.isArray(r.items) && r.items.length > 1 ? `Avg ${money(invoiceLandedPrice(r))}` : money(invoiceLandedPrice(r))}</b></td><td><b>{money(r.grandTotal || 0)}</b></td><td><div className="oldDmsTableActions"><button type="button" className="oldDmsTableActionBtn" title="Edit Purchase Invoice" onClick={() => onEdit?.(r)}><Pencil size={13}/></button><button type="button" className="oldDmsTableActionBtn danger" title="Delete Purchase Invoice" onClick={() => onDelete?.(r)}><Trash2 size={13}/></button></div></td></tr>;
-  })}</tbody></table></div>;
+    return <tr key={r._id || r.invoiceNo}>
+      <td>{i + 1}</td>
+      <td><StatusBadge value={r.status || "POSTED"}/></td>
+      <td><button className="tableClickLink" onClick={() => onEdit?.(r)}>{r.invoiceNo || "-"}</button></td>
+      <td>{ymd(r.date)}</td>
+      <td>{contact}</td>
+      <td><EditMasterLink to="/dms/customers" id={r.supplierGlobalId} resource="customer">{r.partyNameDisplay || r.supplierNameSnapshot || "Supplier"}</EditMasterLink></td>
+      <td>{owner}</td>
+      <td>{r.userNameDisplay || r.createdByNameSnapshot || "—"}</td>
+      <td>{r.builtyNumber || r.BuiltyNumber || r.biltyNo || "-"}</td>
+      <td>{r.noOfPackages || r.NoOfPackage || "-"}</td>
+      <td>{r.vehicleNo || r.vehicleNumber || "-"}</td>
+      <td>{money(tax.igst)}</td>
+      <td>{money(tax.cgst)}</td>
+      <td>{money(tax.sgst)}</td>
+      <td>{money(r.landedCharges || 0)}</td>
+      <td>{money(r.taxableTotal ?? r.subtotal ?? 0)}</td>
+      <td>{money(r.otherCharges || 0)}</td>
+      <td>{money(r.roundOff || 0)}</td>
+      <td><b title={landedPriceBreakdown(r) || "Landed price"}>{Array.isArray(r.items) && r.items.length > 1 ? `Avg ${money(invoiceLandedPrice(r))}` : money(invoiceLandedPrice(r))}</b></td>
+      <td><b>{money(r.grandTotal || 0)}</b></td>
+      <td><div className="oldDmsTableActions"><button type="button" className="oldDmsTableActionBtn" title="Edit Purchase Invoice" onClick={() => onEdit?.(r)}><Pencil size={13}/></button><button type="button" className="oldDmsTableActionBtn danger" title="Delete Purchase Invoice" onClick={() => onDelete?.(r)}><Trash2 size={13}/></button></div></td>
+    </tr>;
+  })}</>;
 }

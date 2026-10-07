@@ -13,7 +13,7 @@ import PageHeader from "../components/PageHeader.jsx";
 import DataTable from "../components/DataTable.jsx";
 import StatusBadge from "../components/StatusBadge.jsx";
 import { api, getUser } from "../lib/api.js";
-import { configuredFinancialYear, financialYearOptions } from "../lib/financialYear.js";
+import { currentFinancialYear, financialYearOptions } from "../lib/financialYear.js";
 import { bankFieldsFromIfsc, lookupIfscMaster, normalizeIfsc } from "../lib/ifscLookup.js";
 import { accessForPath } from "../lib/permissionAccess.js";
 import "../profile-bank.css";
@@ -31,7 +31,7 @@ const uniq = (arr) => [...new Set(arr.filter(Boolean))];
 export default function BankAccountPage() {
   const access = accessForPath("/dms/bank-accounts");
   const session = getUser();
-  const selectedFy = configuredFinancialYear(session);
+  const [selectedFy, setSelectedFy] = useState(currentFinancialYear());
   const years = financialYearOptions(session, { count: 10, extra: [selectedFy] });
 
   const [rows, setRows] = useState([]), [meta, setMeta] = useState({ page: 1, pages: 1, total: 0 });
@@ -57,7 +57,7 @@ export default function BankAccountPage() {
     } catch (e) { setError(e.message); }
   };
 
-  useEffect(() => { load(1); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => { load(1); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [selectedFy]);
 
 
   const open = (row = null) => {
@@ -175,6 +175,7 @@ export default function BankAccountPage() {
 
     <section className="panel">
       <div className="toolbar bankToolbar">
+        <label>Financial Year <select value={selectedFy} onChange={e => setSelectedFy(e.target.value)}>{years.map(y => <option key={y} value={y}>{y}</option>)}</select></label>
         <div className="searchBox"><Search size={16}/><input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key === "Enter" && load(1)} placeholder="Search bank, branch, account, IFSC…"/></div>
         <select value={status} onChange={e=>{const value=e.target.value;setStatus(value);load(1,value)}}><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option><option value="ALL">All</option></select>
         <button className="btn ghost" onClick={()=>load(1)}><RefreshCw size={15}/>Refresh</button><span className="recordCount">{meta.total || 0} accounts</span>

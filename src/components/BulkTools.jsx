@@ -2,6 +2,7 @@ import React,{useRef,useState} from "react";
 import { Upload,Download,PencilLine,Trash2,X,CheckCircle2,AlertTriangle } from "lucide-react";
 import { api,getUser } from "../lib/api.js";
 import { accessForPath } from "../lib/permissionAccess.js";
+import { getAppPathname } from "../lib/appLocation.js";
 
 const esc=v=>`"${String(v??"").replaceAll('"','""')}"`;
 
@@ -25,7 +26,7 @@ export default function BulkTools({
   schemaForUpload=true
 }){
   const currentUser=getUser();
-  const currentPath=typeof window!=="undefined"?window.location.pathname:"";
+  const currentPath=getAppPathname();
   const assignedAccess=currentUser?.role==="MASTER"?accessForPath(currentPath):currentUser?.pageAccess?.[currentPath];
   const canCreate=!assignedAccess||Boolean(assignedAccess.create);
   const canEdit=!assignedAccess||Boolean(assignedAccess.edit);

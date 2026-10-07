@@ -1,7 +1,8 @@
 import React,{useEffect,useRef} from "react";
 import {Pencil,Plus} from "lucide-react";
+import {getAppSearch,toHashRouteUrl} from "../lib/appLocation.js";
 
-const query=()=>{try{return new URLSearchParams(window.location.search)}catch{return new URLSearchParams()}};
+const query=()=>{try{return new URLSearchParams(getAppSearch())}catch{return new URLSearchParams()}};
 
 export function isLookupCreate(){
  const p=query();
@@ -69,7 +70,7 @@ export default function CreateLookupButton({
     url.searchParams.set("create","1");
    }
    waiting.current=true;
-   const w=window.open(url.toString(),"_blank");
+   const w=window.open(toHashRouteUrl(`${url.pathname}${url.search}`),"_blank");
    if(!w){
     waiting.current=false;
     window.alert?.("Please allow pop-ups for this DMS site to create or edit records without losing the current form.");
