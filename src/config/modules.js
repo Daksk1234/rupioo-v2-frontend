@@ -460,6 +460,19 @@ export const nav = {
       group: "Money & Accounts",
       items: [
         p(
+          "/dms/receipts",
+          "Receipts",
+          ReceiptIndianRupee,
+          "Completed receipts and salesperson receipts pending verification",
+        ),
+        p(
+          "/dms/cashier",
+          "Cashier",
+          HandCoins,
+          "Receive salesperson cash, resolve collection issues, cashbook and cashier closing",
+          "cashier",
+        ),
+        p(
           "/dms/banking",
           "Bank Transactions",
           Landmark,

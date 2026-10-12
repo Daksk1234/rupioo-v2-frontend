@@ -79,24 +79,43 @@ function CreditExposure({ data }) {
 }
 
 function ReceiptBounce({ data }) {
-  const [tab,setTab]=useState("ISSUED"),[party,setParty]=useState("ALL"),[bank,setBank]=useState("ALL"),[month,setMonth]=useState("ALL MONTHS"),[search,setSearch]=useState("");
+  const [tab,setTab]=useState("PENDING"),[party,setParty]=useState("ALL"),[bank,setBank]=useState("ALL"),[month,setMonth]=useState("ALL MONTHS"),[search,setSearch]=useState("");
+  const [otpBusy,setOtpBusy]=useState("");
 
   const eventDate=(r)=>tab==="CLEARED"?r.clearanceDate:tab==="BOUNCED"?r.bounceDate:(r.issueDate||r.depositDate);
   const rows=useMemo(()=>(data?.rows||[]).filter(r=>{
-    const inTab=tab==="ISSUED"?["ISSUED","DEPOSITED"].includes(r.status):r.status===tab;
+    const inTab=tab==="PENDING"?r.status==="PENDING":tab==="ISSUED"?["ISSUED","DEPOSITED"].includes(r.status):r.status===tab;
     const d=eventDate(r),m=d?upper(new Date(d).toLocaleString("en-IN",{month:"short",timeZone:"UTC"})):"";
-    return inTab&&(party==="ALL"||(r.partyId||r.partyName)===party)&&(bank==="ALL"||(r.bankAccountId||r.bank)===bank)&&(month==="ALL MONTHS"||m===month)&&(!search||upper(`${r.partyName} ${r.chequeNumber} ${r.bank} ${r.accountNumber} ${r.receiptNo}`).includes(upper(search)));
+    return inTab&&(party==="ALL"||(r.partyId||r.partyName)===party)&&(bank==="ALL"||(r.bankAccountId||r.bank)===bank)&&(month==="ALL MONTHS"||m===month)&&(!search||upper(`${r.partyName} ${r.chequeNumber} ${r.bank} ${r.accountNumber} ${r.receiptNo} ${r.madeBy}`).includes(upper(search)));
   }),[data,tab,party,bank,month,search]);
+
+  const showCashierOtp=async(r)=>{
+    try{
+      setOtpBusy(r.id);
+      const d=await api(`/transactions/receipts/${encodeURIComponent(r.id||r.receiptNo)}/cashier-otp?financialYear=${encodeURIComponent(data?.financialYear||"")}`);
+      window.alert(`CASHIER OTP: ${d.otp || "—"}\n\nRECEIPT: ${d.receiptNo || r.receiptNo}\nPARTY: ${d.partyName || r.partyName}\nAMOUNT: ${money(d.amount || r.amount)}${d.expiresAt?`\nEXPIRES: ${new Date(d.expiresAt).toLocaleString("en-IN")}`:""}`);
+    }catch(e){window.alert(e.message||"Unable to load cashier OTP");}
+    finally{setOtpBusy("");}
+  };
 
   const common=[
     {key:"partyName",label:"PARTY NAME"},
     {key:"chequeNumber",label:"CHEQUE NUMBER"},
     {key:"amount",label:"AMOUNT",num:true,render:r=>money(r.amount),csv:r=>r.amount},
-    {key:"bank",label:"BANK NAME"},
-    {key:"accountNumber",label:"ACCOUNT NUMBER"},
+    {key:"bank",label:"BANK NAME",render:r=>r.bank||"—"},
+    {key:"accountNumber",label:"ACCOUNT NUMBER",render:r=>r.accountNumber||"—"},
   ];
   const statusCol={key:"status",label:"STATUS",render:r=><span className={`finBadge ${r.status==="BOUNCED"?"bad":r.status==="CLEARED"?"ok":"warn"}`}>{r.status}</span>};
-  const cols=tab==="ISSUED"?[
+  const pendingCols=[
+    {key:"issueDate",label:"RECEIPT / CHEQUE DATE",render:r=>dateOnly(r.issueDate),csv:r=>r.issueDate?new Date(r.issueDate).toISOString().slice(0,10):""},
+    ...common,
+    {key:"madeBy",label:"MADE BY",render:r=>r.madeBy||"—"},
+    {key:"customerOtpStatus",label:"CUSTOMER OTP",render:r=><span className={`finBadge ${r.customerOtpStatus==="VERIFIED"?"ok":"warn"}`}>{r.customerOtpStatus||"—"}</span>},
+    {key:"cashierOtpStatus",label:"CASHIER OTP",render:r=><span className="finBadge warn">{r.cashierOtpStatus||"PENDING"}</span>},
+    statusCol,
+    {key:"otp",label:"CASHIER OTP",render:r=><button className="finBtn" disabled={otpBusy===r.id||r.cashierOtpStatus!=="PENDING"} onClick={()=>showCashierOtp(r)}>{otpBusy===r.id?"LOADING...":"SEE OTP"}</button>,csv:()=>""},
+  ];
+  const cols=tab==="PENDING"?pendingCols:tab==="ISSUED"?[
     {key:"issueDate",label:"ISSUE DATE",render:r=>dateOnly(r.issueDate),csv:r=>r.issueDate?new Date(r.issueDate).toISOString().slice(0,10):""},
     {key:"depositDate",label:"DATE OF DEPOSIT",render:r=>dateOnly(r.depositDate),csv:r=>r.depositDate?new Date(r.depositDate).toISOString().slice(0,10):""},
     ...common,statusCol,
@@ -115,7 +134,7 @@ function ReceiptBounce({ data }) {
   const total=rows.reduce((s,r)=>s+Number(r.amount||0),0);
   return <>
     <div className="finReceiptTabs">
-      {[["ISSUED","ISSUED / DEPOSITED"],["CLEARED","CLEARED"],["BOUNCED","BOUNCED"]].map(([key,label])=><button key={key} type="button" className={tab===key?"active":""} onClick={()=>setTab(key)}>{label}</button>)}
+      {[["PENDING","PENDING"],["ISSUED","ISSUED / DEPOSITED"],["CLEARED","CLEARED"],["BOUNCED","BOUNCED"]].map(([key,label])=><button key={key} type="button" className={tab===key?"active":""} onClick={()=>setTab(key)}>{label}</button>)}
     </div>
     <div className="finToolbar">
       <Select label="PARTY" value={party} onChange={setParty}><option value="ALL">ALL</option>{(data?.meta?.parties||[]).map(x=><option key={x.id||x.name} value={x.id||x.name}>{x.name}</option>)}</Select>
@@ -127,7 +146,7 @@ function ReceiptBounce({ data }) {
     <Summary items={[
       {label:tab==="ISSUED"?"ISSUED / DEPOSITED":tab,value:rows.length},
       {label:"AMOUNT",value:money(total)},
-      {label:"TOTAL CHEQUES",value:data?.totals?.cheques||0},
+      {label:"PENDING AMOUNT",value:money(data?.totals?.pending)},
       {label:"CLEARED AMOUNT",value:money(data?.totals?.cleared)},
       {label:"BOUNCED AMOUNT",value:money(data?.totals?.bounced)},
     ]}/>

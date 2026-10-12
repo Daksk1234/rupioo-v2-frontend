@@ -29,6 +29,7 @@ const GstApiPage = GstApiModule.default || GstApiModule.GstApiPage || null;
 import LiveReportPage from "./LiveReportPage.jsx";
 import LedgerPage from "./LedgerPage.jsx";
 import FinancialEntryPage from "./FinancialEntryPage.jsx";
+import ReceiptManagementPage from "./ReceiptManagementPage.jsx";
 import TransporterPage from "./TransporterPage.jsx";
 import PincodePage from "./PincodePage.jsx";
 import IfscPage from "./IfscPage.jsx";
@@ -42,6 +43,7 @@ import DocumentNotePage from "./DocumentNotePage.jsx";
 import PurchaseAutomationPage from "./PurchaseAutomationPage.jsx";
 import BankAccountPage from "./BankAccountPage.jsx";
 import BankTransactionPage from "./BankTransactionPage.jsx";
+import CashierPage from "./CashierPage.jsx";
 import BranchManagementPage from "./BranchManagementPage.jsx";
 import FormLibraryPage from "./FormLibraryPage.jsx";
 import LegacyMigrationPage from "./LegacyMigrationPage.jsx";
@@ -80,6 +82,7 @@ export default function ModulePage({page}){
  if(page.kind==="debit-notes")return <DocumentNotePage documentType="DEBIT_NOTE"/>;
  if(page.kind==="bank-accounts")return <BankAccountPage/>;
  if(page.kind==="bank-transactions")return <BankTransactionPage/>;
+ if(page.kind==="cashier")return <CashierPage/>;
  if(page.kind==="scan-forms")return <FormLibraryPage/>;
  if(page.kind==="legacy-migration")return <LegacyMigrationPage/>;
  if(page.kind==="gst-reports"){const initial=page.path==="/dms/gstr2b"?"GSTR2B":page.path==="/dms/gstr3b"?"GSTR3B":page.path==="/dms/hsn-wise-report"?"HSN":page.path==="/dms/gst-input-output"?"INPUTOUTPUT":page.path==="/dms/tax-report"?"TAX":"GSTR1";return <GstReportsPage initialReport={initial}/>;}
@@ -107,7 +110,8 @@ export default function ModulePage({page}){
  if(page.kind==="transporter-master")return <GlobalTransporterPage/>;
  if(page.kind==="sales-pincode-allotment")return <SalesPincodeAllotmentPage/>;
  if(page.path==="/dms/transporters")return <TransporterPage/>;
- if(page.path==="/dms/receipts"||page.path==="/dms/payments"||page.path==="/dms/banking")return <BankTransactionPage/>;
+ if(page.path==="/dms/receipts")return <ReceiptManagementPage/>;
+ if(page.path==="/dms/payments"||page.path==="/dms/banking")return <BankTransactionPage/>;
  if(page.path==="/dms/expenses")return <FinancialEntryPage type="expenses"/>;
  if(page.path==="/dms/ledger")return <LedgerPage page={page}/>;
  if(reportLikePaths.has(page.path))return <LiveReportPage page={page}/>;

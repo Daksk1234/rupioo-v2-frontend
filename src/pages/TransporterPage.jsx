@@ -1,52 +1,633 @@
-import React,{useEffect,useState} from "react";
-import {Database,DownloadCloud,Pencil,Trash2,Plus,Search,RefreshCw,ChevronLeft,ChevronRight,MapPin} from "lucide-react";
+import React, { useEffect, useState } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  MapPin,
+  Plus,
+  RefreshCw,
+  Search,
+  Trash2,
+  X,
+} from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import DataTable from "../components/DataTable.jsx";
 import EditMasterLink from "../components/EditMasterLink.jsx";
-import {getLookupEditId,isLookupCreate,notifyLookupCreated} from "../components/CreateLookupButton.jsx";
-import BulkTools from "../components/BulkTools.jsx";
-import ScanAndFill from "../components/ScanAndFill.jsx";
-import {api} from "../lib/api.js";
+import {
+  getLookupEditId,
+  isLookupCreate,
+  notifyLookupCreated,
+} from "../components/CreateLookupButton.jsx";
+import { api } from "../lib/api.js";
+import {
+  cleanGstin,
+  cleanPincode,
+  fetchGstCompany,
+  fetchPincodeCompany,
+} from "../lib/companyLookup.js";
 
-const blankStation=()=>({name:"",type:"BOTH",address:"",pincode:"",servicePincodes:"",serviceCities:"",serviceStates:"",contactName:"",designation:"",phone:"",email:""});
-const lookupContext=()=>{try{const q=new URLSearchParams(window.location.search);return {pincode:q.get("ctx_pincode")||"",city:q.get("ctx_city")||"",state:q.get("ctx_state")||"",address:q.get("ctx_address")||"",stationType:q.get("ctx_stationType")||"DELIVERY"}}catch{return {}}};
-const blank=()=>({name:"",gstin:"",pan:"",paymentTerms:"",freightNotes:"",status:"ACTIVE",globalTransporterId:"",stations:[blankStation()]});
-const blankFromLookup=()=>{const c=lookupContext();const st=blankStation();st.type=c.stationType||"DELIVERY";st.name=c.city||"";st.address=c.address||"";st.pincode=String(c.pincode||"").replace(/\D/g,"").slice(0,6);st.servicePincodes=st.pincode;st.serviceCities=c.city||"";st.serviceStates=c.state||"";return {...blank(),stations:[st]}};
-const bulkFields=[
- {key:"name",label:"Transporter Name",example:"ABC Transport",noBulkEdit:true},{key:"gstin",label:"GSTIN",example:"18ABCDE1234F1Z5",noBulkEdit:true},{key:"pan",label:"PAN",example:"ABCDE1234F",noBulkEdit:true},{key:"stationName",label:"Station Name",example:"Guwahati",noBulkEdit:true},{key:"stationType",label:"Station Type",example:"BOTH",noBulkEdit:true},{key:"address",label:"Station Address",example:"Beltola, Guwahati",noBulkEdit:true},{key:"pincode",label:"Pincode",example:"781028",noBulkEdit:true},{key:"contactName",label:"Contact Person",example:"Rakesh",noBulkEdit:true},{key:"designation",label:"Designation",example:"Manager",noBulkEdit:true},{key:"phone",label:"Phone",example:"9876543210",noBulkEdit:true},{key:"email",label:"Email",example:"rakesh@example.com",noBulkEdit:true},{key:"paymentTerms",label:"Payment Terms",example:"30 Days"},{key:"freightNotes",label:"Freight Notes",example:"Per carton"},{key:"status",label:"Status",type:"select",options:["ACTIVE","INACTIVE"],example:"ACTIVE"}
+const blankServiceArea = () => ({
+  pincode: "",
+  city: "",
+  state: "",
+  loading: false,
+});
+
+const blank = () => ({
+  name: "",
+  gstin: "",
+  baseStation: "",
+  serviceAreas: [blankServiceArea()],
+  status: "ACTIVE",
+  globalTransporterId: "",
+});
+
+const lookupContext = () => {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    return {
+      pincode: q.get("ctx_pincode") || "",
+      city: q.get("ctx_city") || "",
+      state: q.get("ctx_state") || "",
+    };
+  } catch {
+    return {};
+  }
+};
+
+const blankFromLookup = () => {
+  const ctx = lookupContext();
+  const pincode = cleanPincode(ctx.pincode);
+  return {
+    ...blank(),
+    baseStation: ctx.city || "",
+    serviceAreas: [
+      {
+        ...blankServiceArea(),
+        pincode,
+        city: ctx.city || "",
+        state: ctx.state || "",
+      },
+    ],
+  };
+};
+
+const unique = (values = []) => [
+  ...new Set(values.map((value) => String(value || "").trim()).filter(Boolean)),
 ];
-const splitList=v=>String(v||"").split(/[,;\n]+/).map(x=>x.trim()).filter(Boolean);
-const stationFromLocal=st=>{const c=st?.contacts?.[0]||{};return {...blankStation(),name:st?.name||"",type:st?.type||st?.stationType||"BOTH",address:st?.address||"",pincode:st?.pincode||"",servicePincodes:(st?.servicePincodes||[]).join(", "),serviceCities:(st?.serviceCities||[]).join(", "),serviceStates:(st?.serviceStates||[]).join(", "),contactName:c.name||"",designation:c.designation||"",phone:c.phone||"",email:c.email||""}};
 
-export default function TransporterPage(){
- const[rows,setRows]=useState([]),[show,setShow]=useState(false),[edit,setEdit]=useState(null),[form,setForm]=useState(blank()),[msg,setMsg]=useState(""),[selected,setSelected]=useState([]),[q,setQ]=useState(""),[page,setPage]=useState(1),[meta,setMeta]=useState({page:1,pages:1,total:0});
- const[globalQ,setGlobalQ]=useState(""),[globalRows,setGlobalRows]=useState([]),[globalBusy,setGlobalBusy]=useState(false),[gstBusy,setGstBusy]=useState(false);
- const load=async(next=page)=>{try{const d=await api(`/operations/transporters?q=${encodeURIComponent(q)}&page=${next}&limit=50`);const loaded=d.items||[];setRows(loaded);setMeta(d.meta||{page:next,pages:1,total:loaded.length});setPage(d.meta?.page||next);return loaded}catch(e){setMsg(e.message);return []}};
- const open=async r=>{setEdit(r||null);let stations=(r?.stations||[]).map(stationFromLocal);if(r?.globalTransporterId){try{const d=await api(`/operations/transporters/${encodeURIComponent(r.globalTransporterId)}/stations`);if(d.items?.length)stations=d.items.map(stationFromLocal)}catch{}}setForm(r?{...blank(),...r,stations:stations.length?stations:[blankStation()]}:(isLookupCreate()?blankFromLookup():blank()));setGlobalQ("");setGlobalRows([]);setShow(true)};
- useEffect(()=>{(async()=>{const loaded=await load(1);const lookupEditId=getLookupEditId();if(lookupEditId){const row=(loaded||[]).find(r=>String(r._id)===String(lookupEditId));if(row)await open(row);else setMsg("Selected transporter could not be loaded for editing")}else if(isLookupCreate())await open(null)})()},[]);
- const searchGlobal=async()=>{if(globalQ.trim().length<2){setGlobalRows([]);return}setGlobalBusy(true);try{const d=await api(`/operations/transporters/global-search?q=${encodeURIComponent(globalQ.trim())}`);setGlobalRows(d.items||[])}catch(e){setMsg(e.message)}finally{setGlobalBusy(false)}};
- const importGlobal=async r=>{try{const saved=await api(`/operations/transporters/import-global/${r._id}`,{method:"POST"});setMsg(`${saved?.name||r.name} added from Global MASTER`);setGlobalRows([]);setGlobalQ("");await load(1);await open(saved)}catch(e){setMsg(e.message)}};
- const lookupGst=async raw=>{const gstin=String(raw||"").toUpperCase().replace(/[^0-9A-Z]/g,"").slice(0,15);if(gstin.length!==15)return;setGstBusy(true);setMsg("Searching GST details...");try{const r=await api(`/reference/gst/search?gstin=${encodeURIComponent(gstin)}`);const principal=r.principalAddressRaw||{};const pincode=String(principal.pncd||"").replace(/\D/g,"").slice(0,6);const city=principal.loc||principal.locality||principal.dst||"";const state=principal.stcd||"";const businessName=r.businessName||r.tradeName||r.legalName||"";setForm(f=>{const first={...blankStation(),...(f.stations?.[0]||{})};const nextFirst={...first,name:first.name||city||businessName,address:r.principalAddress||first.address||"",pincode:pincode||first.pincode||"",servicePincodes:first.servicePincodes||pincode,serviceCities:first.serviceCities||city,serviceStates:first.serviceStates||state};return {...f,gstin:r.gstin||gstin,name:businessName||f.name,pan:r.pan||f.pan||gstin.slice(2,12),stations:[nextFirst,...(f.stations||[]).slice(1)]}});setMsg("GST details loaded into Transporter Create")}catch(e){setMsg(e.message)}finally{setGstBusy(false)}};
- const changeGstin=raw=>{const gstin=String(raw||"").toUpperCase().replace(/[^0-9A-Z]/g,"").slice(0,15);setForm(f=>({...f,gstin}));if(gstin.length===15)lookupGst(gstin)};
- const applyTransporterScan=(values)=>setForm(f=>({...f,name:values.name||f.name,gstin:values.gstin||f.gstin,pan:values.pan||f.pan,paymentTerms:values.paymentTerms||f.paymentTerms,freightNotes:values.freightNotes||f.freightNotes,stations:[{...blankStation(),...(f.stations?.[0]||{}),name:values.stationName||f.stations?.[0]?.name||"",type:String(values.stationType||f.stations?.[0]?.type||"BOTH").toUpperCase(),pincode:values.pincode||f.stations?.[0]?.pincode||"",address:values.address||f.stations?.[0]?.address||"",serviceCities:values.serviceCities||f.stations?.[0]?.serviceCities||"",servicePincodes:values.servicePincodes||f.stations?.[0]?.servicePincodes||"",contactName:values.contactName||f.stations?.[0]?.contactName||"",phone:values.phone||f.stations?.[0]?.phone||"",email:values.email||f.stations?.[0]?.email||""},...(f.stations||[]).slice(1)]}));
- const updateStation=(i,k,v)=>setForm(f=>({...f,stations:f.stations.map((st,n)=>n===i?{...st,[k]:v}:st)}));
- const addStation=()=>setForm(f=>({...f,stations:[...f.stations,blankStation()]}));
- const removeStation=i=>setForm(f=>({...f,stations:f.stations.length<=1?f.stations:f.stations.filter((_,n)=>n!==i)}));
- const save=async()=>{try{if(!form.name.trim())throw new Error("Transporter name is required");const stations=form.stations.filter(st=>st.name||st.pincode||st.address).map(st=>({name:st.name||st.serviceCities?.split?.(",")?.[0]||form.name,type:st.type||"BOTH",address:st.address||"",pincode:String(st.pincode||"").replace(/\D/g,"").slice(0,6),servicePincodes:splitList(st.servicePincodes).map(x=>x.replace(/\D/g,"").slice(0,6)).filter(Boolean),serviceCities:splitList(st.serviceCities),serviceStates:splitList(st.serviceStates),contacts:(st.contactName||st.phone||st.email)?[{name:st.contactName||"",designation:st.designation||"",phone:st.phone||"",email:st.email||"",active:true}]:[]}));const payload={name:form.name,gstin:form.gstin,pan:form.pan,globalTransporterId:form.globalTransporterId||undefined,stations,paymentTerms:form.paymentTerms,freightNotes:form.freightNotes,status:form.status};const saved=await api(edit?`/operations/transporters/${edit._id}`:"/operations/transporters",{method:edit?"PUT":"POST",body:JSON.stringify(payload)});setShow(false);setMsg(edit?"Transporter and station network updated":"Transporter created in company and Global MASTER");await load();if(isLookupCreate()||getLookupEditId())notifyLookupCreated("transporter",{id:saved?._id||edit?._id,name:saved?.name||form.name,globalTransporterId:saved?.globalTransporterId||form.globalTransporterId||""})}catch(e){setMsg(e.message)}};
- const del=async r=>{if(!confirm(`Deactivate ${r.name}?`))return;try{await api(`/operations/transporters/${r._id}`,{method:"DELETE"});load()}catch(e){setMsg(e.message)}};
- const toggle=id=>setSelected(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]);const toggleAll=(checked,ids)=>setSelected(s=>checked?[...new Set([...s,...ids])]:s.filter(x=>!ids.includes(x)));
- return <>
-  <PageHeader title="Transporters" description="Company transporter list linked to the Global MASTER. One transporter can have many booking/delivery stations." onAdd={()=>open(null)} addLabel="Add Transporter"/>
-  {msg&&<div className="resultBanner good">{msg}</div>}
-  <BulkTools endpoint="/operations/transporters" fields={bulkFields} editFields={bulkFields.filter(f=>!f.noBulkEdit)} selectedIds={selected} onClear={()=>setSelected([])} onDone={()=>load()} schemaForUpload={false} templateName="transporters-bulk-template.csv"/>
-  {show&&<section className="panel editorPanel"><div className="formTitle"><div><h3>{edit?"Edit Transporter":"Create Transporter"}</h3><span>Company, station network and service area.</span></div><ScanAndFill documentType="TRANSPORTER" targetPath="/dms/transporters" onApply={applyTransporterScan}/></div>
-   <div className="subCard" style={{marginBottom:14}}><div className="sectionLabel"><Database size={15}/> Find in Global Transporter MASTER</div><div className="toolbar"><div className="searchBox"><Search size={15}/><input value={globalQ} onChange={e=>setGlobalQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&searchGlobal()} placeholder="Transporter, station, area, mobile or email..."/></div><button type="button" className="btn ghost" onClick={searchGlobal} disabled={globalBusy}>{globalBusy?"Searching...":"Search MASTER"}</button></div>{globalRows.length>0&&<div className="lookupResultList">{globalRows.map(r=><button type="button" className="lookupResultCard" key={r._id} onClick={()=>importGlobal(r)}><div><strong>{r.name}</strong><span>{(r.categories||[]).join(", ")||r.address||"All India"}</span><small>{[r.contactPerson,r.mobile,r.email].filter(Boolean).join(" • ")}</small></div><DownloadCloud size={16}/></button>)}</div>}</div>
-   <div className="formGrid"><label>Transporter Name *<input value={form.name||""} onChange={e=>setForm({...form,name:e.target.value})}/></label><label>GSTIN<div className="lookupSelectRow"><input value={form.gstin||""} maxLength={15} onChange={e=>changeGstin(e.target.value)}/>{gstBusy&&<span>Fetching…</span>}</div><small>Enter all 15 GSTIN characters to auto-fill transporter name, PAN and principal station address.</small></label><label>PAN<input value={form.pan||""} onChange={e=>setForm({...form,pan:e.target.value.toUpperCase()})}/></label><label>Payment Terms<input value={form.paymentTerms||""} onChange={e=>setForm({...form,paymentTerms:e.target.value})}/></label><label>Freight Notes<input value={form.freightNotes||""} onChange={e=>setForm({...form,freightNotes:e.target.value})}/></label><label>Status<select value={form.status||"ACTIVE"} onChange={e=>setForm({...form,status:e.target.value})}><option>ACTIVE</option><option>INACTIVE</option></select></label>{form.globalTransporterId&&<label>Global Master ID<input value={form.globalTransporterId} readOnly/></label>}</div>
-   <div className="sectionLabel" style={{marginTop:14}}><MapPin size={14}/> Booking / Delivery Stations</div>
-   <div className="transporterStationStack">{form.stations.map((st,i)=><div className="subCard transporterStationCard" key={i}><div className="stationCardHead"><strong>Station {i+1}</strong><button type="button" className="iconBtn danger" title="Remove station" disabled={form.stations.length===1} onClick={()=>removeStation(i)}><Trash2 size={14}/></button></div><div className="formGrid"><label>Station Name *<input value={st.name} onChange={e=>updateStation(i,"name",e.target.value)} placeholder="Guwahati / Delhi / Kolkata"/></label><label>Station Type<select value={st.type} onChange={e=>updateStation(i,"type",e.target.value)}><option>BOOKING</option><option>DELIVERY</option><option>BOTH</option></select></label><label>Pincode<input value={st.pincode} maxLength={6} onChange={e=>updateStation(i,"pincode",e.target.value.replace(/\D/g,"").slice(0,6))}/></label><label>Service Pincodes<input value={st.servicePincodes} onChange={e=>updateStation(i,"servicePincodes",e.target.value)} placeholder="110001, 110002, 110003"/></label><label>Service Cities<input value={st.serviceCities} onChange={e=>updateStation(i,"serviceCities",e.target.value)} placeholder="Delhi, Noida, Ghaziabad"/></label><label>Service States<input value={st.serviceStates} onChange={e=>updateStation(i,"serviceStates",e.target.value)} placeholder="Delhi, Uttar Pradesh"/></label><label className="span2">Station Address<input value={st.address} onChange={e=>updateStation(i,"address",e.target.value)}/></label><label>Contact Person<input value={st.contactName} onChange={e=>updateStation(i,"contactName",e.target.value)}/></label><label>Designation<input value={st.designation} onChange={e=>updateStation(i,"designation",e.target.value)}/></label><label>Phone<input value={st.phone} onChange={e=>updateStation(i,"phone",e.target.value)}/></label><label>Email<input value={st.email} onChange={e=>updateStation(i,"email",e.target.value)}/></label></div></div>)}</div>
-   <button type="button" className="btn ghost" onClick={addStation}><Plus size={14}/>Add Station</button>
-   <div className="formActions"><button className="btn ghost" onClick={()=>setShow(false)}>Cancel</button><button className="btn primary" disabled={!form.name} onClick={save}><Plus/>{edit?"Update":"Save"}</button></div>
-  </section>}
-  <section className="panel"><div className="toolbar"><div className="searchBox"><Search/><input value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>e.key==="Enter"&&(setSelected([]),load(1))} placeholder="Search transporter, GSTIN, station or contact..."/></div><button className="btn ghost" onClick={()=>load()}><RefreshCw/>Refresh</button><div className="recordCount">{meta.total||0} transporters</div></div><DataTable selectable selectedIds={selected} onToggle={toggle} onToggleAll={toggleAll} rows={rows} columns={[{key:"name",label:"Transporter",render:r=><EditMasterLink onClick={()=>open(r)}>{r.name}</EditMasterLink>},{key:"globalTransporterId",label:"Global ID",render:r=>r.globalTransporterId||"—"},{key:"gstin",label:"GSTIN"},{key:"stations",label:"Stations",render:r=>r.stations?.length||0},{key:"contacts",label:"Contacts",render:r=>(r.stations||[]).reduce((s,x)=>s+(x.contacts?.length||0),0)},{key:"status",label:"Status",status:true},{key:"actions",label:"Actions",render:r=><div className="rowActions"><button onClick={()=>open(r)}><Pencil/></button><button className="danger" onClick={()=>del(r)}><Trash2/></button></div>}]} /><div className="paginationBar"><span>Page {meta.page||page} of {Math.max(1,meta.pages||1)} • {meta.total||0} transporters</span><div><button className="btn ghost" disabled={(meta.page||page)<=1} onClick={()=>{setSelected([]);load((meta.page||page)-1)}}><ChevronLeft size={15}/>Previous</button><button className="btn ghost" disabled={(meta.page||page)>=(meta.pages||1)} onClick={()=>{setSelected([]);load((meta.page||page)+1)}}>Next<ChevronRight size={15}/></button></div></div></section>
- </>;
+function serviceAreasFromRow(row = {}, stations = []) {
+  if (Array.isArray(row.serviceAreas) && row.serviceAreas.length) {
+    return row.serviceAreas.map((area) => ({
+      ...blankServiceArea(),
+      pincode: cleanPincode(area.pincode),
+      city: area.city || "",
+      state: area.state || "",
+    }));
+  }
+
+  const sourceStations = stations.length ? stations : row.stations || [];
+  const first = sourceStations[0] || {};
+  const servicePins = Array.isArray(first.servicePincodes) ? first.servicePincodes : [];
+  // station.pincode is the Superadmin BASE STATION, never a service area.
+  const pins = unique(servicePins)
+    .map(cleanPincode)
+    .filter((pin) => pin.length === 6);
+
+  const cities = Array.isArray(first.serviceCities) ? first.serviceCities : [];
+  const states = Array.isArray(first.serviceStates) ? first.serviceStates : [];
+
+  if (!pins.length) return [blankServiceArea()];
+
+  return pins.map((pincode, index) => ({
+    ...blankServiceArea(),
+    pincode,
+    city: cities[index] || "",
+    state: states[index] || "",
+  }));
+}
+
+export default function TransporterPage() {
+  const [rows, setRows] = useState([]);
+  const [show, setShow] = useState(false);
+  const [edit, setEdit] = useState(null);
+  const [form, setForm] = useState(blank());
+  const [msg, setMsg] = useState("");
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const [meta, setMeta] = useState({ page: 1, pages: 1, total: 0 });
+  const [gstBusy, setGstBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [companyBase, setCompanyBase] = useState({ pincode: "", city: "", state: "" });
+
+  const load = async (next = page) => {
+    try {
+      const d = await api(
+        `/operations/transporters?q=${encodeURIComponent(q)}&page=${next}&limit=50`,
+      );
+      const loaded = d.items || [];
+      setRows(loaded);
+      setMeta(d.meta || { page: next, pages: 1, total: loaded.length });
+      setPage(d.meta?.page || next);
+      return loaded;
+    } catch (e) {
+      setMsg(e.message);
+      return [];
+    }
+  };
+
+  const open = async (row = null) => {
+    setEdit(row || null);
+    setMsg("");
+
+    if (!row) {
+      const next = isLookupCreate() ? blankFromLookup() : blank();
+      next.baseStation = [companyBase.city, companyBase.pincode].filter(Boolean).join(" - ");
+      setForm(next);
+      setShow(true);
+      return;
+    }
+
+    // Service coverage is tenant-local. Do not reload service areas from the
+    // shared Global Transporter Master while editing this Superadmin's list.
+    const stations = row.stations || [];
+    const primaryStation = stations[0] || {};
+    setForm({
+      ...blank(),
+      name: row.name || "",
+      gstin: row.gstin || "",
+      baseStation:
+        [companyBase.city, companyBase.pincode].filter(Boolean).join(" - ") ||
+        row.baseStation ||
+        [primaryStation.city || primaryStation.name, primaryStation.pincode].filter(Boolean).join(" - "),
+      serviceAreas: serviceAreasFromRow(row, stations),
+      status: row.status || "ACTIVE",
+      globalTransporterId: row.globalTransporterId || "",
+    });
+    setShow(true);
+  };
+
+  useEffect(() => {
+    (async () => {
+      let loadedBase = { pincode: "", city: "", state: "" };
+      try {
+        const profile = await api("/company/profile");
+        loadedBase = {
+          pincode: cleanPincode(profile?.pincode || ""),
+          city: String(profile?.city || "").trim(),
+          state: String(profile?.state || "").trim(),
+        };
+        setCompanyBase(loadedBase);
+        setForm((current) => ({
+          ...current,
+          baseStation: [loadedBase.city, loadedBase.pincode].filter(Boolean).join(" - "),
+        }));
+      } catch {
+        setCompanyBase(loadedBase);
+      }
+      const loaded = await load(1);
+      const lookupEditId = getLookupEditId();
+      if (lookupEditId) {
+        const row = (loaded || []).find(
+          (item) => String(item._id) === String(lookupEditId),
+        );
+        if (row) {
+          setCompanyBase(loadedBase);
+          await open(row);
+        } else setMsg("Selected transporter could not be loaded for editing");
+      } else if (isLookupCreate()) {
+        const next = blankFromLookup();
+        next.baseStation = [loadedBase.city, loadedBase.pincode].filter(Boolean).join(" - ");
+        setEdit(null);
+        setForm(next);
+        setShow(true);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const lookupGst = async (raw) => {
+    const gstin = cleanGstin(raw);
+    if (gstin.length !== 15) return;
+
+    setGstBusy(true);
+    try {
+      const result = await fetchGstCompany(gstin);
+      const businessName =
+        result.businessName || result.tradeName || result.legalName || "";
+      setForm((current) => ({
+        ...current,
+        gstin: result.gstin || gstin,
+        name: current.name || businessName,
+      }));
+    } catch (e) {
+      setMsg(e.message);
+    } finally {
+      setGstBusy(false);
+    }
+  };
+
+  const changeGstin = (value) => {
+    const gstin = cleanGstin(value);
+    setForm((current) => ({ ...current, gstin }));
+    if (gstin.length === 15) lookupGst(gstin);
+  };
+
+  const addServiceArea = () => {
+    setForm((current) => ({
+      ...current,
+      serviceAreas: [...current.serviceAreas, blankServiceArea()],
+    }));
+  };
+
+  const removeServiceArea = (index) => {
+    setForm((current) => ({
+      ...current,
+      serviceAreas:
+        current.serviceAreas.length <= 1
+          ? current.serviceAreas
+          : current.serviceAreas.filter((_, rowIndex) => rowIndex !== index),
+    }));
+  };
+
+  const updateServiceArea = (index, changes) => {
+    setForm((current) => ({
+      ...current,
+      serviceAreas: current.serviceAreas.map((area, rowIndex) =>
+        rowIndex === index ? { ...area, ...changes } : area,
+      ),
+    }));
+  };
+
+  const lookupPincode = async (index, rawPincode) => {
+    const pincode = cleanPincode(rawPincode);
+    if (pincode.length !== 6) return;
+
+    updateServiceArea(index, { loading: true });
+    try {
+      const row = await fetchPincodeCompany(pincode);
+      const city = row.city || row.area || row.district || "";
+      updateServiceArea(index, {
+        pincode,
+        city,
+        state: row.state || "",
+        loading: false,
+      });
+    } catch (e) {
+      updateServiceArea(index, { loading: false, city: "", state: "" });
+      setMsg(e.message);
+    }
+  };
+
+  const changeServicePincode = (index, value) => {
+    const pincode = cleanPincode(value);
+    updateServiceArea(index, {
+      pincode,
+      ...(pincode.length !== 6 ? { city: "", state: "" } : {}),
+    });
+    if (pincode.length === 6) lookupPincode(index, pincode);
+  };
+
+  const save = async () => {
+    try {
+      if (!form.name.trim()) throw new Error("Transporter name is required");
+      if (companyBase.pincode.length !== 6 || !companyBase.city)
+        throw new Error("Set the Superadmin / Company pincode and city in Company Profile first");
+
+      const serviceAreas = form.serviceAreas
+        .map((area) => ({
+          pincode: cleanPincode(area.pincode),
+          city: String(area.city || "").trim(),
+          state: String(area.state || "").trim(),
+        }))
+        .filter((area) => area.pincode || area.city);
+
+      if (!serviceAreas.length) {
+        throw new Error("Add at least one service pincode");
+      }
+
+      for (const area of serviceAreas) {
+        if (area.pincode.length !== 6) {
+          throw new Error("Every service pincode must contain 6 digits");
+        }
+        if (!area.city) {
+          throw new Error(`City could not be found for pincode ${area.pincode}`);
+        }
+      }
+
+      const duplicatePin = serviceAreas.find(
+        (area, index) =>
+          serviceAreas.findIndex((other) => other.pincode === area.pincode) !== index,
+      );
+      if (duplicatePin) {
+        throw new Error(`Pincode ${duplicatePin.pincode} is already added`);
+      }
+
+      const payload = {
+        name: form.name.trim(),
+        gstin: cleanGstin(form.gstin),
+        globalTransporterId: form.globalTransporterId || undefined,
+        status: form.status || "ACTIVE",
+        stations: [
+          {
+            name: [companyBase.city, companyBase.pincode].filter(Boolean).join(" - "),
+            type: "BOTH",
+            address: "",
+            pincode: companyBase.pincode,
+            city: companyBase.city,
+            state: companyBase.state,
+            servicePincodes: serviceAreas.map((area) => area.pincode),
+            serviceCities: serviceAreas.map((area) => area.city),
+            serviceStates: serviceAreas.map((area) => area.state),
+            contacts: [],
+          },
+        ],
+      };
+
+      setSaving(true);
+      const saved = await api(
+        edit ? `/operations/transporters/${edit._id}` : "/operations/transporters",
+        {
+          method: edit ? "PUT" : "POST",
+          body: JSON.stringify(payload),
+        },
+      );
+
+      setShow(false);
+      setMsg(edit ? "Transporter updated" : "Transporter created");
+      await load(edit ? page : 1);
+
+      if (isLookupCreate() || getLookupEditId()) {
+        notifyLookupCreated("transporter", {
+          id: saved?._id || edit?._id,
+          name: saved?.name || form.name,
+          globalTransporterId:
+            saved?.globalTransporterId || form.globalTransporterId || "",
+        });
+      }
+    } catch (e) {
+      setMsg(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const del = async () => {
+    if (!edit?._id) return;
+    if (!confirm(`Permanently delete ${edit.name}? This will remove the transporter from this company's database and current customer mappings.`)) return;
+    try {
+      setSaving(true);
+      await api(`/operations/transporters/${edit._id}`, { method: "DELETE" });
+      setShow(false);
+      setEdit(null);
+      setForm(blank());
+      setMsg("Transporter permanently deleted");
+      await load(page);
+    } catch (e) {
+      setMsg(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const columns = [
+    {
+      key: "name",
+      label: "Transporter Name",
+      render: (row) => (
+        <EditMasterLink onClick={() => open(row)}>{row.name}</EditMasterLink>
+      ),
+    },
+    {
+      key: "gstin",
+      label: "GST No.",
+      render: (row) => row.gstin || "—",
+    },
+    {
+      key: "baseStation",
+      label: "Base Station",
+      render: (row) => row.baseStation || row.stations?.[0]?.name || "—",
+    },
+    {
+      key: "servicePincodes",
+      label: "Service Pincode",
+      render: (row) =>
+        Array.isArray(row.servicePincodes) && row.servicePincodes.length
+          ? row.servicePincodes.join(", ")
+          : "—",
+    },
+    {
+      key: "serviceCities",
+      label: "City Name",
+      render: (row) =>
+        Array.isArray(row.serviceCities) && row.serviceCities.length
+          ? row.serviceCities.join(", ")
+          : "—",
+    },
+    {
+      key: "status",
+      label: "Status",
+      status: true,
+    },
+  ];
+
+  return (
+    <>
+      <PageHeader
+        title="Transporters"
+        description="Base station is always your Superadmin / Company pincode and city. Add transporter service pincodes; city is fetched automatically from Pincode Master."
+        onAdd={() => open(null)}
+        addLabel="Add Transporter"
+      />
+
+      {msg && <div className="resultBanner good">{msg}</div>}
+
+      {show && (
+        <section className="panel editorPanel">
+          <div className="formTitle">
+            <div>
+              <h3>{edit ? "Edit Transporter" : "Create Transporter"}</h3>
+              <span>Simple transporter setup</span>
+            </div>
+            <button type="button" className="iconBtn" onClick={() => setShow(false)}>
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="formGrid">
+            <label>
+              Transporter Name *
+              <input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="Transporter name"
+              />
+            </label>
+
+            <label>
+              GST No.
+              <div className="lookupSelectRow">
+                <input
+                  value={form.gstin}
+                  maxLength={15}
+                  onChange={(e) => changeGstin(e.target.value)}
+                  placeholder="15 digit GSTIN"
+                />
+                {gstBusy && <span>Fetching…</span>}
+              </div>
+            </label>
+
+            <label>
+              Base Station (Auto)
+              <input
+                value={form.baseStation}
+                readOnly
+                placeholder="Set Company Profile pincode and city"
+              />
+              <small>Goods dispatch from the Superadmin / Company location.</small>
+            </label>
+          </div>
+
+          <div className="sectionLabel" style={{ marginTop: 16 }}>
+            <MapPin size={15} /> Service Pincodes
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-end",
+              gap: 10,
+              flexWrap: "wrap",
+              marginTop: 10,
+            }}
+          >
+            {form.serviceAreas.map((area, index) => (
+              <div
+                key={index}
+                className="subCard"
+                style={{
+                  display: "flex",
+                  alignItems: "flex-end",
+                  gap: 8,
+                  margin: 0,
+                  padding: 10,
+                }}
+              >
+                <label style={{ minWidth: 130 }}>
+                  Service Pincode {index + 1}
+                  <input
+                    value={area.pincode}
+                    maxLength={6}
+                    inputMode="numeric"
+                    onChange={(e) => changeServicePincode(index, e.target.value)}
+                    placeholder="781001"
+                    style={{ width: 130 }}
+                  />
+                </label>
+
+                <label style={{ minWidth: 180 }}>
+                  City Name
+                  <div className="lookupSelectRow">
+                    <input
+                      value={area.city}
+                      readOnly
+                      placeholder={area.loading ? "Fetching…" : "Auto fetch"}
+                      style={{ width: 180 }}
+                    />
+                    {area.loading && <span>...</span>}
+                  </div>
+                </label>
+
+                {form.serviceAreas.length > 1 && (
+                  <button
+                    type="button"
+                    className="iconBtn danger"
+                    title="Remove pincode"
+                    onClick={() => removeServiceArea(index)}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                )}
+              </div>
+            ))}
+
+            <button type="button" className="btn ghost" onClick={addServiceArea}>
+              <Plus size={15} /> Add More
+            </button>
+          </div>
+
+          <div className="formActions">
+            {edit && (
+              <button
+                type="button"
+                className="btn danger"
+                disabled={saving}
+                onClick={del}
+                title="Permanently delete this transporter"
+              >
+                <Trash2 size={16} />
+                Delete
+              </button>
+            )}
+            <button type="button" className="btn ghost" onClick={() => setShow(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn primary"
+              disabled={saving || !form.name.trim() || companyBase.pincode.length !== 6 || !companyBase.city}
+              onClick={save}
+            >
+              <Plus size={16} />
+              {saving ? "Saving..." : edit ? "Update" : "Save"}
+            </button>
+          </div>
+        </section>
+      )}
+
+      <section className="panel">
+        <div className="toolbar">
+          <div className="searchBox">
+            <Search size={16} />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && load(1)}
+              placeholder="Search transporter, GST, base station, pincode or city..."
+            />
+          </div>
+          <button type="button" className="btn ghost" onClick={() => load(page)}>
+            <RefreshCw size={15} /> Refresh
+          </button>
+          <div className="recordCount">{meta.total || 0} transporters</div>
+        </div>
+
+        <DataTable rows={rows} columns={columns} />
+
+        <div className="paginationBar">
+          <span>
+            Page {meta.page || page} of {Math.max(1, meta.pages || 1)} • {meta.total || 0}{" "}
+            transporters
+          </span>
+          <div>
+            <button
+              type="button"
+              className="btn ghost"
+              disabled={(meta.page || page) <= 1}
+              onClick={() => load((meta.page || page) - 1)}
+            >
+              <ChevronLeft size={15} /> Previous
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              disabled={(meta.page || page) >= (meta.pages || 1)}
+              onClick={() => load((meta.page || page) + 1)}
+            >
+              Next <ChevronRight size={15} />
+            </button>
+          </div>
+        </div>
+      </section>
+    </>
+  );
 }

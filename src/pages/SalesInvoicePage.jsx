@@ -55,13 +55,21 @@ const saleFromBasicGST = (basic, gst) => round2(Number(basic || 0) * (1 + Number
 const applyGradeDiscountToBasic = (basic, pct) => {
   const base = Math.max(0, Number(basic || 0));
   const discount = Math.min(100, Math.max(0, Number(pct || 0)));
-  return floor2(base * (1 - discount / 100));
+  return round2(base * (1 - discount / 100));
 };
-const productBaseBasicRate = (product = {}) => {
-  const configuredBasic = Number(product.salePrice || 0);
-  if (configuredBasic > 0) return configuredBasic;
-  // Fallback only for older products that do not yet have a Sale Rate saved.
-  return basicFromSaleGST(Number(product.mrp || 0), Number(product.gstRate || 0));
+const basicFromMrpAndGrade = (mrp, gst, pct) => {
+  const gross = Math.max(0, Number(mrp || 0));
+  const tax = Math.max(0, Number(gst || 0));
+  const discount = Math.min(100, Math.max(0, Number(pct || 0)));
+  if (!(gross > 0)) return 0;
+  return round2((gross / (1 + tax / 100)) * (1 - discount / 100));
+};
+const productGradeBasicRate = (product = {}, gradePct = 0) => {
+  const mrp = Number(product.mrp || 0);
+  const gst = Number(product.gstRate || 0);
+  if (mrp > 0) return basicFromMrpAndGrade(mrp, gst, gradePct);
+  // Backward-compatible fallback for an old product that has no MRP yet.
+  return applyGradeDiscountToBasic(Number(product.salePrice || 0), gradePct);
 };
 const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const fyMonthOrder = ["April", "May", "June", "July", "August", "September", "October", "November", "December", "January", "February", "March"];
@@ -207,6 +215,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   const [searchParams, setSearchParams] = useSearchParams();
   const editId = embedded ? "" : (searchParams.get("edit") || "");
   const sourceOrderId = embedded ? "" : (searchParams.get("orderId") || "");
+  const deliverId = embedded ? "" : (searchParams.get("deliverId") || "");
   const createMode = embedded ? true : (searchParams.get("create") === "1" || Boolean(editId) || Boolean(sourceOrderId));
   const requestedFinancialYear = searchParams.get("financialYear") || configuredFinancialYear(sessionUser);
   // New Sales Invoices always start from today's date/current FY. Editing (and
@@ -234,12 +243,17 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [fy, setFy] = useState(initialPageFinancialYear);
-  const [listFy, setListFy] = useState(currentFinancialYear());
+  const [listFy, setListFy] = useState(deliverId ? requestedFinancialYear : currentFinancialYear());
   const [nextInvoiceNo, setNextInvoiceNo] = useState("");
   const [invoiceNumberSeries, setInvoiceNumberSeries] = useState(null);
   const invoiceNoManuallyEditedRef = useRef(false);
+  const autoDeliveryOpenedRef = useRef("");
   const [seriesMsg, setSeriesMsg] = useState("");
   const [customerFinancial, setCustomerFinancial] = useState({});
+  const [transporterOptions, setTransporterOptions] = useState([]);
+  const [selectedTransporterId, setSelectedTransporterId] = useState("");
+  const [transporterMatchType, setTransporterMatchType] = useState("NONE");
+  const [transporterLoading, setTransporterLoading] = useState(false);
   const [editingOriginalGrand, setEditingOriginalGrand] = useState(0);
   const [deliveryTarget, setDeliveryTarget] = useState(null);
   const [deliveryForm, setDeliveryForm] = useState({ deliveredAt: "", transporterName: "", noOfPackages: "", cnDate: "", cnQty: "", cnNumber: "", vehicleNo: "", biltyNo: "", deliveryRemarks: "" });
@@ -314,6 +328,9 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     setRows([newRow()]);
     setAdjustments([]);
     setCustomerFinancial({});
+    setTransporterOptions([]);
+    setSelectedTransporterId("");
+    setTransporterMatchType("NONE");
     setEditingOriginalGrand(0);
     setInvoiceNumberSeries(null);
     setNextInvoiceNo("");
@@ -339,6 +356,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
   const hydrateEdit = (invoice, productList) => {
     setCustomerId(invoice.customerGlobalId || "");
+    setSelectedTransporterId(invoice.transportAssignment?.transporterId || "");
     setHeader({
       invoiceNo: invoice.invoiceNo || "",
       date: invoice.date ? ymd(invoice.date) : initialDateForFinancialYear(fy),
@@ -433,11 +451,11 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         : [fy];
       const invoicePromise = Promise.all(
         invoiceYears.map((year) =>
-          fetchAllPaged(`/transactions/sales-invoices?financialYear=${encodeURIComponent(year)}${!createMode && listFy !== "ALL" && periodType === "MONTHLY" ? `&fromDate=${monthBounds(listFy, selectedMonth).startDate}&toDate=${monthBounds(listFy, selectedMonth).endDate}` : ""}`, 100)
+          fetchAllPaged(`/transactions/sales-invoices?financialYear=${encodeURIComponent(year)}${!createMode && !deliverId && listFy !== "ALL" && periodType === "MONTHLY" ? `&fromDate=${monthBounds(listFy, selectedMonth).startDate}&toDate=${monthBounds(listFy, selectedMonth).endDate}` : ""}`, 100)
             .catch(() => []),
         ),
       ).then((groups) => groups.flat());
-      const [customerList, productList, invoiceList, warehouseResult] = await Promise.all([
+      const [customerList, productList, invoiceList, warehouseResult, gradeResult] = await Promise.all([
         fetchTransactionParties(200),
         fetchAllPaged(
           `/catalog/old-dms-price-list/products?financialYear=${encodeURIComponent(fy)}`,
@@ -445,9 +463,26 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         ),
         invoicePromise,
         api("/modules/dms/warehouses?status=ACTIVE&limit=200").catch(() => ({ items: [] })),
+        api("/catalog/grades?status=ACTIVE&limit=200").catch(() => ({ items: [] })),
       ]);
       const warehouseList = Array.isArray(warehouseResult) ? warehouseResult : (warehouseResult?.items || []);
-      setCustomers(customerList);
+      // Customer Grades is the single source of truth for grade discounts.
+      // CustomerLink keeps a cached percentage for compatibility, but invoice
+      // creation must always use the current percentage configured on the
+      // CUSTOMER GRADES master page.
+      const gradeList = Array.isArray(gradeResult) ? gradeResult : (gradeResult?.items || []);
+      const gradeByCode = new Map(gradeList.map((g) => [String(g.code || "").trim().toUpperCase(), g]));
+      const customerListWithLiveGrades = customerList.map((c) => {
+        const code = String(c.gradeCode || "").trim().toUpperCase();
+        const grade = code ? gradeByCode.get(code) : null;
+        return {
+          ...c,
+          gradeCode: code || c.gradeCode || "",
+          gradeName: grade?.name || c.gradeName || "",
+          gradeDiscountPct: grade ? Number(grade.discountPct || 0) : 0,
+        };
+      });
+      setCustomers(customerListWithLiveGrades);
       setProducts(productList);
       setInvoices(invoiceList);
       setWarehouses(warehouseList);
@@ -538,7 +573,6 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     ? `${invoicePrefix}${header.invoiceNo}${invoiceSuffix}` : "";
 
   const customer = customers.find((c) => c.globalCustomerId === customerId);
-  const customerTransport = customer?.assignedTransportDetails || null;
   const customerGstin = partyGstin(customer);
   const customerDeliveryAddress = customer?.addresses?.find((a) => String(a?.type || "BILLING").toUpperCase() === "BILLING") || customer?.addresses?.[0] || {};
   const customerDeliveryCity = String(customerDeliveryAddress?.city || "").trim();
@@ -593,6 +627,56 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
   useEffect(() => {
     let alive = true;
+    if (!customerId || !customer || isCashCustomer) {
+      setTransporterOptions([]);
+      setTransporterMatchType("NONE");
+      setTransporterLoading(false);
+      if (!editId) setSelectedTransporterId("");
+      return () => { alive = false; };
+    }
+
+    const pincode = String(customerDeliveryAddress?.pincode || "").replace(/\D/g, "").slice(0, 6);
+    const city = String(customerDeliveryAddress?.city || "").trim();
+    if (pincode.length !== 6 && !city) {
+      setTransporterOptions([]);
+      setTransporterMatchType("NONE");
+      setTransporterLoading(false);
+      if (!editId) setSelectedTransporterId("");
+      return () => { alive = false; };
+    }
+
+    setTransporterLoading(true);
+    const transporterUrl = editId
+      ? `/operations/transporters/customer-match?pincode=${encodeURIComponent(pincode)}&city=${encodeURIComponent(city)}`
+      : `/transactions/sales-invoices/transporter-options?customerGlobalId=${encodeURIComponent(customerId)}&financialYear=${encodeURIComponent(financialYearFromDate(header.date) || fy)}`;
+    api(transporterUrl)
+      .then((result) => {
+        if (!alive) return;
+        const items = Array.isArray(result?.items) ? result.items : [];
+        const defaultTransporterId = String(result?.defaultTransporterId || "");
+        setTransporterOptions(items);
+        setTransporterMatchType(result?.matchType || "NONE");
+        setSelectedTransporterId((current) => {
+          if (current && items.some((row) => String(row.transporterId) === String(current))) return current;
+          if (!editId && defaultTransporterId && items.some((row) => String(row.transporterId) === defaultTransporterId)) {
+            return defaultTransporterId;
+          }
+          return items.length === 1 ? String(items[0].transporterId || "") : "";
+        });
+      })
+      .catch(() => {
+        if (!alive) return;
+        setTransporterOptions([]);
+        setTransporterMatchType("NONE");
+        if (!editId) setSelectedTransporterId("");
+      })
+      .finally(() => { if (alive) setTransporterLoading(false); });
+
+    return () => { alive = false; };
+  }, [customerId, customer, customerDeliveryAddress?.pincode, customerDeliveryAddress?.city, isCashCustomer, editId, fy, header.date]);
+
+  useEffect(() => {
+    let alive = true;
     if (!customerId || !createMode) {
       setCustomerFinancial({});
       return () => {
@@ -617,8 +701,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     const p = products.find((x) => String(x._id) === String(id));
     if (!p) return;
     const gradePct = Number(customer?.gradeDiscountPct || 0);
-    const baseBasic = productBaseBasicRate(p);
-    const basic = applyGradeDiscountToBasic(baseBasic, gradePct);
+    const basic = productGradeBasicRate(p, gradePct);
     const saleRate = saleFromBasicGST(basic, p.gstRate || 0);
     setRows((rs) => rs.map((r, i) => i === index ? recalc({
       ...r,
@@ -721,7 +804,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       if (!r.productId) return { ...r, gradeDiscountPct: gradePct };
       const p = products.find((item) => String(item._id) === String(r.productId));
       if (!p) return { ...r, gradeDiscountPct: gradePct };
-      const basic = applyGradeDiscountToBasic(productBaseBasicRate(p), gradePct);
+      const basic = productGradeBasicRate(p, gradePct);
       return recalc({
         ...r,
         gradeDiscountPct: gradePct,
@@ -732,7 +815,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     // Re-price only while creating a new invoice. Existing invoices keep their
     // historical saved rate when opened for edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerId, createMode, editId, products]);
+  }, [customerId, customer?.gradeDiscountPct, createMode, editId, products]);
 
   const adjustmentCalc = useMemo(() => {
     const base = round2(rows.reduce((s, r) => s + Number(r.taxable || 0), 0));
@@ -810,6 +893,8 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     if (rows.some((r) => r.qtyError)) { setMsg("One or more product rows have insufficient stock"); return false; }
     if (billingErrors.length) { setMsg(`${billingErrors[0].message}. Invoice cannot be posted below purchase price.`); return false; }
     if (totals.grand > 49999 && !String(header.arn || "").trim()) { setMsg("ARN / reference is required above ₹49,999"); return false; }
+    if (!isCashCustomer && transporterOptions.length > 1 && !selectedTransporterId) { setMsg("Select a transporter for this customer"); return false; }
+    if (!isCashCustomer && transportRequiredForCustomer && !transporterLoading && transporterOptions.length === 0) { setMsg(`No transporter serves ${customerDeliveryAddress?.pincode || customerDeliveryCity || "this customer"}. Update the Transporter service area first.`); return false; }
     if (String(header.eInvoice?.status || "").toUpperCase() === "GENERATED") {
       if (!String(header.eInvoice?.irn || "").trim()) { setMsg("GST e-Invoice IRN is required when status is GENERATED"); return false; }
       if (!String(header.eInvoice?.ackNo || "").trim()) { setMsg("GST e-Invoice Ack No. is required when status is GENERATED"); return false; }
@@ -830,6 +915,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         // Direct invoices continue through the normal invoice credit checks.
         creditOverrideApproved: Boolean(sourceOrderId),
         customerGlobalId: customerId,
+        transporterId: selectedTransporterId || "",
         billDiscount: totals.discountTotal,
         otherCharges: totals.chargesTotal,
         items: rows.map((r) => ({
@@ -1037,6 +1123,14 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       deliveryRemarks: invoice?.delivery?.remarks || "",
     });
   };
+
+  useEffect(() => {
+    if (!deliverId || autoDeliveryOpenedRef.current === deliverId || !invoices.length) return;
+    const invoice = invoices.find((row) => String(row?._id || "") === String(deliverId));
+    if (!invoice) return;
+    autoDeliveryOpenedRef.current = deliverId;
+    openDelivery(invoice);
+  }, [deliverId, invoices]);
 
   const openSavedCnImage = async (invoice) => {
     const fileId = invoice?.consignmentNote?.imageFileId;
@@ -1312,7 +1406,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         </div>
 
         <div className="oldDmsTopLine">
-          <label data-invoice-field="buyer" className="od-wide"><span>Buyer / Party *</span><div className="lookupSelectRow"><select value={customerId} onChange={(e) => setCustomerId(e.target.value)}><option value="">Select Buyer / Party</option>{customers.map((c) => <option key={c.globalCustomerId} value={c.globalCustomerId}>{partyOptionLabel(c)}{c.gradeCode ? ` • Grade ${c.gradeCode}` : ""}</option>)}</select><CreateLookupButton to="/dms/customers" label="Create" resource="customer" selectedValue={customerId} onReturn={load} /></div></label>
+          <label data-invoice-field="buyer" className="od-wide"><span>Buyer / Party *</span><div className="lookupSelectRow"><select value={customerId} onChange={(e) => setCustomerId(e.target.value)}><option value="">Select Buyer / Party</option>{customers.map((c) => <option key={c.globalCustomerId} value={c.globalCustomerId}>{partyOptionLabel(c)}{c.gradeCode ? ` • Grade ${c.gradeCode} • ${Number(c.gradeDiscountPct || 0).toFixed(2)}%` : ""}</option>)}</select><CreateLookupButton to="/dms/customers" label="Create" resource="customer" selectedValue={customerId} onReturn={load} /></div></label>
           <label data-invoice-field="date"><span>Order Date *</span><input type="date" value={header.date} onChange={(e) => setH("date", e.target.value)} /></label>
           <label data-invoice-field="invoice" className="od-wide">
             <span>Invoice Number *{!editId && activeInvoiceSeries?.cashInvoice ? " • UNREGISTERED / CASH (C)" : ""}</span>
@@ -1338,6 +1432,9 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
           <label data-invoice-field="warehouse" className="od-warehouse"><span>Warehouse *</span><select value={header.warehouseId || ""} onChange={(e) => setH("warehouseId", e.target.value)}><option value="">Select Warehouse</option>{warehouses.map((w) => <option key={w._id} value={w._id}>{w.title || w.reference || "Warehouse"}</option>)}</select></label>
           {totals.grand > 49999 && <label data-invoice-field="arn"><span>ARN Number *</span><input value={header.arn} onChange={(e) => setH("arn", e.target.value)} /></label>}
 
+          {customer && <label data-invoice-field="customerGrade"><span>Customer Grade</span><input readOnly value={customer.gradeCode ? `${customer.gradeCode}${customer.gradeName ? ` - ${customer.gradeName}` : ""}` : "NO GRADE"} /><small>Assigned in Customer Master</small></label>}
+          {customer && <label data-invoice-field="customerGradeDiscount"><span>Grade Discount %</span><input readOnly value={`${Number(customer.gradeDiscountPct || 0).toFixed(2)}%`} /><small>LIVE FROM CUSTOMER GRADES • Default Basic = MRP ex GST − Grade %</small></label>}
+
           {customer && credit.sanctioned > 0 ? (
             <>
               <label data-invoice-field="sanction"><span>Sanction Amount</span><input readOnly value={credit.sanctioned.toFixed(2)} /><small>Ledger B: {credit.outstanding.toFixed(2)}</small></label>
@@ -1346,7 +1443,35 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
               <label data-invoice-field="net" className={credit.net < 0 ? "od-net bad" : "od-net good"}><span>Net Balance</span><input readOnly value={credit.net.toFixed(2)} /></label>
             </>
           ) : customer ? <label data-invoice-field="payment"><span>Payment Mode *</span><input readOnly value={customer.paymentType || "CASH"} /></label> : null}
-          {customer && transportRequiredForCustomer && <label data-invoice-field="transport" className="od-wide"><span>Assigned Transport</span><input readOnly value={customerTransport?.transporter?.name || "Assign in Customer Master"}/><small>{companyCity} → {customerDeliveryCity || "Customer City"} • {customerTransport?.deliveryStation?.name || customer.serviceArea || "Delivery station required"}{customerTransport?.deliveryStation?.pincode?` • ${customerTransport.deliveryStation.pincode}`:""}</small></label>}
+          {customer && !isCashCustomer && (transporterOptions.length > 0 || transportRequiredForCustomer) && (
+            <label data-invoice-field="transport" className="od-wide">
+              <span>Transporter {transporterOptions.length > 1 ? "*" : ""}</span>
+              <select
+                value={selectedTransporterId}
+                onChange={(e) => setSelectedTransporterId(e.target.value)}
+                disabled={transporterLoading || transporterOptions.length === 0}
+              >
+                {transporterOptions.length > 1 && <option value="">Select Transporter</option>}
+                {transporterOptions.length === 0 && <option value="">No Eligible City Transporter</option>}
+                {transporterOptions.map((t) => (
+                  <option key={t.transporterId} value={t.transporterId}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+              <small>
+                {transporterLoading
+                  ? "Loading city transporters..."
+                  : transporterOptions.length
+                    ? editId
+                      ? `${transporterMatchType === "PINCODE" ? `EXACT PINCODE ${customerDeliveryAddress?.pincode || ""}` : `CITY ${customerDeliveryCity || ""}`} • ${transporterOptions.length} available`
+                      : `CITY ${customerDeliveryCity || ""} • ${transporterOptions.length} available • exact-pincode transporters excluded • last used auto-selected when eligible`
+                    : editId
+                      ? `No transporter serves ${customerDeliveryAddress?.pincode || customerDeliveryCity || "this customer"}`
+                      : `No eligible city transporter after excluding exact pincode ${customerDeliveryAddress?.pincode || ""}`}
+              </small>
+            </label>
+          )}
         </div>
 
         <div className="oldDmsProductArea">
@@ -1360,7 +1485,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
               <label data-invoice-field="netQty" className={r.qtyError ? "od-error" : ""}><span>Net Qty *</span><input type="number" min="0" value={r.qty} onChange={(e) => changeRow(i, "qty", Number(e.target.value))} /></label>
               <label data-invoice-field="unit"><span>Unit</span><input readOnly value={r.basicUnit || ""} /></label>
               <label data-invoice-field="mrp"><span>MRP</span><input readOnly value={Number(r.mrp || 0).toFixed(3)} /></label>
-              <label data-invoice-field="grade"><span>Grade %</span><input readOnly value={r.gradeDiscountPct || 0} /></label>
+              <label data-invoice-field="grade"><span>Grade %</span><input readOnly value={r.gradeDiscountPct || 0} /><small>{r.productId ? `MRP ex GST ₹${(Number(r.mrp || 0) / (1 + Number(r.gstRate || 0) / 100)).toFixed(2)}` : ""}</small></label>
               <label data-invoice-field="sale"><span>Sale ₹ incl GST</span><input type="number" step="0.01" value={r.saleRate || 0} onChange={(e) => changeSaleRate(i, Number(e.target.value))} /></label>
               <label data-invoice-field="basic" className={billingErrorMap.has(i) ? "od-error" : ""}><span>Basic ₹ ex GST</span><input type="number" step="0.01" value={r.basicRate || 0} onChange={(e) => changeBasicRate(i, Number(e.target.value))} />{billingErrorMap.has(i) && <small>{billingErrorMap.get(i)}</small>}</label>
               <label data-invoice-field="discount"><span>Disc %</span><input type="number" step="0.01" value={r.discountPct || 0} onChange={(e) => changeRow(i, "discountPct", Number(e.target.value))} /></label>

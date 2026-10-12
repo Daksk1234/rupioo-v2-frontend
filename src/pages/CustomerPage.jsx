@@ -155,6 +155,8 @@ const blankCustomer = () => ({
   assignedTransportGlobalId: "",
   assignedTransportBookingStationId: "",
   assignedTransportDeliveryStationId: "",
+  assignedTransporters: [],
+  transporterMatchType: "NONE",
   serviceArea: "",
   salespersonId: "",
   priceList: "STANDARD",
@@ -251,8 +253,6 @@ const bulkUploadFields = [
   { key: "creditDays", label: "Credit Period", type: "number" },
   { key: "creditLimit", label: "Amount Limit", type: "number" },
   { key: "graceDays", label: "Grace Days", type: "number" },
-  { key: "assignedTransport", label: "Assigned Transport" },
-  { key: "serviceArea", label: "Service Area" },
   { key: "salespersonId", label: "Salesperson ID" },
   { key: "gradeCode", label: "Customer Grade" },
   { key: "gradeDiscountPct", label: "Grade Discount %", type: "number" },
@@ -394,8 +394,8 @@ export default function CustomerPage({
     }),
     [grades, setGrades] = useState([]),
     [salesUsers, setSalesUsers] = useState([]),
-    [transporters, setTransporters] = useState([]),
     [transporterMatches, setTransporterMatches] = useState([]),
+    [transporterMatchType, setTransporterMatchType] = useState("NONE"),
     [transporterBusy, setTransporterBusy] = useState(false),
     [review, setReview] = useState(null),
     [view360, setView360] = useState(null),
@@ -471,71 +471,30 @@ export default function CustomerPage({
       setDownloadingData(false);
     }
   };
-  const loadTransporters = () =>
-    api("/operations/transporters?limit=200")
-      .then((d) => setTransporters(Array.isArray(d?.items) ? d.items : []))
-      .catch(() => setTransporters([]));
   const loadTransportMatches = async (target = form) => {
-    if (!needsTransport(target.city, firmLocation.city)) {
+    const pin = digits(target.pincode).slice(0, 6);
+    const city = String(target.city || "").trim();
+    if (pin.length !== 6 && !city) {
       setTransporterMatches([]);
+      setTransporterMatchType("NONE");
       return [];
     }
-    const pin = digits(target.pincode).slice(0, 6);
-    if (pin.length !== 6 && !target.city && !target.state) return [];
     setTransporterBusy(true);
     try {
       const d = await api(
-        `/operations/transporters/service-match?pincode=${encodeURIComponent(pin)}&city=${encodeURIComponent(target.city || "")}&state=${encodeURIComponent(target.state || "")}`,
+        `/operations/transporters/customer-match?pincode=${encodeURIComponent(pin)}&city=${encodeURIComponent(city)}`,
       );
       const items = Array.isArray(d?.items) ? d.items : [];
       setTransporterMatches(items);
+      setTransporterMatchType(d?.matchType || "NONE");
       return items;
     } catch (e) {
       setMsg(e.message);
       setTransporterMatches([]);
+      setTransporterMatchType("NONE");
       return [];
     } finally {
       setTransporterBusy(false);
-    }
-  };
-  const selectTransportMatch = async (value, source = transporterMatches) => {
-    try {
-      if (!value) {
-        setForm((f) => ({
-          ...f,
-          assignedTransport: "",
-          assignedTransportGlobalId: "",
-          assignedTransportBookingStationId: "",
-          assignedTransportDeliveryStationId: "",
-          serviceArea: "",
-        }));
-        return;
-      }
-      const match = (source || []).find(
-        (x) => String(x.globalTransporterId) === String(value),
-      );
-      if (!match) return;
-      let localId = match.localTransporterId;
-      if (!localId) {
-        const saved = await api(
-          `/operations/transporters/import-global/${match._id}`,
-          { method: "POST" },
-        );
-        localId = saved?._id || "";
-        await loadTransporters();
-      }
-      const delivery = (match.deliveryStations || [])[0];
-      const booking = (match.bookingStations || [])[0];
-      setForm((f) => ({
-        ...f,
-        assignedTransport: String(localId || ""),
-        assignedTransportGlobalId: match.globalTransporterId || "",
-        assignedTransportDeliveryStationId: delivery?.stationId || "",
-        assignedTransportBookingStationId: booking?.stationId || "",
-        serviceArea: delivery?.name || delivery?.city || f.serviceArea,
-      }));
-    } catch (e) {
-      setMsg(e.message);
     }
   };
   useEffect(() => {
@@ -543,7 +502,6 @@ export default function CustomerPage({
     api("/catalog/grades?limit=200&status=ACTIVE")
       .then((d) => setGrades(Array.isArray(d?.items) ? d.items : []))
       .catch(() => {});
-    loadTransporters();
     api("/access/sales-pincode-users")
       .then((d) => setSalesUsers((Array.isArray(d) ? d : []).filter((u) => String(u?.roleCode || "").toUpperCase() === "SALES_PERSON")))
       .catch(() => setSalesUsers([]));
@@ -558,38 +516,20 @@ export default function CustomerPage({
       .catch(() => {});
   }, [approvalsOnly]);
   useEffect(() => {
-    if (!form.city) return;
-    const mode = needsTransport(form.city, firmLocation.city)
+    if (!form.city && digits(form.pincode).length !== 6) {
+      setTransporterMatches([]);
+      setTransporterMatchType("NONE");
+      return;
+    }
+    const mode = form.city && needsTransport(form.city, firmLocation.city)
       ? "OUTSIDE"
       : "LOCAL";
-    setForm((f) => {
-      if (
-        f.regionType === mode &&
-        (mode !== "LOCAL" ||
-          (!f.assignedTransport &&
-            !f.assignedTransportGlobalId &&
-            !f.assignedTransportBookingStationId &&
-            !f.assignedTransportDeliveryStationId))
-      )
-        return f;
-      return {
-        ...f,
-        regionType: mode,
-        ...(mode === "LOCAL"
-          ? {
-              assignedTransport: "",
-              assignedTransportGlobalId: "",
-              assignedTransportBookingStationId: "",
-              assignedTransportDeliveryStationId: "",
-              serviceArea: f.city || f.serviceArea,
-            }
-          : {}),
-      };
-    });
-    if (mode === "OUTSIDE" && (digits(form.pincode).length === 6 || form.city))
-      loadTransportMatches({ ...form, regionType: mode });
-    else setTransporterMatches([]);
-  }, [form.pincode, form.city, form.state, firmLocation.city]);
+    setForm((current) =>
+      current.regionType === mode ? current : { ...current, regionType: mode },
+    );
+    loadTransportMatches({ ...form, regionType: mode });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.pincode, form.city, firmLocation.city]);
   const change = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const applyCustomerScan = async (values) => {
     const bank = {
@@ -1077,6 +1017,8 @@ export default function CustomerPage({
           c.assignedTransportBookingStationId || "",
         assignedTransportDeliveryStationId:
           c.assignedTransportDeliveryStationId || "",
+        assignedTransporters: Array.isArray(c.assignedTransporters) ? c.assignedTransporters : [],
+        transporterMatchType: c.transporterMatchType || "NONE",
         serviceArea: c.serviceArea || "",
         salespersonId: c.salespersonId || "",
         priceList: c.priceList || "STANDARD",
@@ -1182,19 +1124,6 @@ export default function CustomerPage({
         form.city &&
         needsTransport(form.city, firmLocation.city),
       );
-      if (!migratedEdit && nonLocal && !form.assignedTransportGlobalId)
-        throw new Error(
-          `Assign a transporter serving ${form.city || form.pincode} before saving this customer`,
-        );
-      if (!migratedEdit && nonLocal && !form.assignedTransport)
-        throw new Error(
-          "Selected transporter is not linked to the company transporter master",
-        );
-      if (!migratedEdit && nonLocal && !form.assignedTransportDeliveryStationId)
-        throw new Error(
-          `Select a delivery station serving ${form.city || form.pincode}`,
-        );
-
       for (const bank of form.bankDetails.filter(
         (b) => b.accountNumber || b.accountName || b.ifsc || b.bankName,
       )) {
@@ -1222,10 +1151,6 @@ export default function CustomerPage({
         ...form,
         tradeName: form.legalName,
         salespersonId: isCreditor ? "" : form.salespersonId,
-        assignedTransport: isCreditor ? "" : form.assignedTransport,
-        assignedTransportGlobalId: isCreditor ? "" : form.assignedTransportGlobalId,
-        assignedTransportBookingStationId: isCreditor ? "" : form.assignedTransportBookingStationId,
-        assignedTransportDeliveryStationId: isCreditor ? "" : form.assignedTransportDeliveryStationId,
         regionType:
           hasFirmCity && form.city
             ? nonLocal
@@ -2023,163 +1948,38 @@ export default function CustomerPage({
                     </label>
                   </>
                 )}
-                {transportRequired && (
-                  <>
-                    <label className="transportLookupLabel span2">
+                {String(form.partyType || "").toUpperCase() !== "CREDITOR" && (
+                  <div className="span2">
+                    <div className="transportLookupLabel">
                       <span>
-                        <Truck size={13} /> Assigned Transport *{" "}
-                        {transporterBusy && <small>Matching...</small>}
+                        <Truck size={13} /> Auto-Mapped Transporters {transporterBusy && <small>Matching...</small>}
                       </span>
                       <div className="transportDestinationHint">
-                        Delivery:{" "}
-                        {[form.area, form.city, form.state, form.pincode]
-                          .filter(Boolean)
-                          .join(" • ")}
+                        Customer: {[form.pincode, form.city].filter(Boolean).join(" • ") || "Enter pincode"}
                       </div>
-                      <div className="lookupSelectRow">
-                        <select
-                          value={form.assignedTransportGlobalId || ""}
-                          onChange={(e) => selectTransportMatch(e.target.value)}
-                          required
-                        >
-                          <option value="">
-                            Select transporter serving{" "}
-                            {form.city || form.pincode || "customer"}
-                          </option>
-                          {transporterMatches.map((t) => (
-                            <option
-                              key={t.globalTransporterId}
-                              value={t.globalTransporterId}
-                            >
-                              {t.name} —{" "}
-                              {t.deliveryStations?.[0]?.pincode === form.pincode
-                                ? "Exact Pincode"
-                                : t.deliveryStations?.[0]?.city ||
-                                  t.deliveryStations?.[0]?.name ||
-                                  "Service Area"}
-                              {t.needsImport ? " • Global MASTER" : ""}
-                            </option>
-                          ))}
-                        </select>
-                        <CreateLookupButton
-                          to="/dms/transporters"
-                          label="Create"
-                          resource="transporter"
-                          selectedValue={form.assignedTransport || ""}
-                          context={{
-                            stationType: "DELIVERY",
-                            pincode: form.pincode,
-                            city: form.city,
-                            state: form.state,
-                            address: form.address,
-                          }}
-                          onReturn={async (payload) => {
-                            await loadTransporters();
-                            const matches = await loadTransportMatches(form);
-                            const created = (matches || []).find(
-                              (x) =>
-                                String(x.localTransporterId || "") ===
-                                  String(payload?.id || "") ||
-                                String(x.globalTransporterId || "") ===
-                                  String(payload?.globalTransporterId || ""),
-                            );
-                            if (created)
-                              await selectTransportMatch(
-                                created.globalTransporterId,
-                                matches,
-                              );
-                          }}
-                        />
-                      </div>
-                      {!transporterBusy && !transporterMatches.length && (
-                        <small className="fieldHint">
-                          No transporter currently serves this delivery
-                          city/pincode. Use + to create one; its delivery
-                          station is prefilled from this customer and saved in
-                          Global MASTER.
-                        </small>
+                      {!transporterBusy && transporterMatches.length > 0 && (
+                        <div className="resultBanner good" style={{ marginTop: 8 }}>
+                          <b>{transporterMatches.length} transporter{transporterMatches.length === 1 ? "" : "s"} mapped automatically</b>
+                          <div style={{ marginTop: 6 }}>
+                            {transporterMatches.map((t) => (
+                              <div key={t.transporterId || t.globalTransporterId}>
+                                {t.name} • {transporterMatchType === "PINCODE" ? `EXACT PINCODE ${form.pincode}` : `CITY ${form.city}`}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
                       )}
-                    </label>
-                    {form.assignedTransportGlobalId && (
-                      <>
-                        <label>
-                          Booking Station
-                          <select
-                            value={form.assignedTransportBookingStationId || ""}
-                            onChange={(e) =>
-                              change(
-                                "assignedTransportBookingStationId",
-                                e.target.value,
-                              )
-                            }
-                          >
-                            <option value="">
-                              Auto / Select Booking Station
-                            </option>
-                            {(
-                              transporterMatches.find(
-                                (t) =>
-                                  t.globalTransporterId ===
-                                  form.assignedTransportGlobalId,
-                              )?.bookingStations || []
-                            ).map((st) => (
-                              <option key={st.stationId} value={st.stationId}>
-                                {st.name}
-                                {st.city ? ` — ${st.city}` : ""}
-                                {st.pincode ? ` (${st.pincode})` : ""}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label>
-                          Delivery Station
-                          <select
-                            value={
-                              form.assignedTransportDeliveryStationId || ""
-                            }
-                            onChange={(e) => {
-                              const id = e.target.value;
-                              const st = (
-                                transporterMatches.find(
-                                  (t) =>
-                                    t.globalTransporterId ===
-                                    form.assignedTransportGlobalId,
-                                )?.deliveryStations || []
-                              ).find((x) => x.stationId === id);
-                              setForm((f) => ({
-                                ...f,
-                                assignedTransportDeliveryStationId: id,
-                                serviceArea:
-                                  st?.name || st?.city || f.serviceArea,
-                              }));
-                            }}
-                          >
-                            <option value="">Select Delivery Station *</option>
-                            {(
-                              transporterMatches.find(
-                                (t) =>
-                                  t.globalTransporterId ===
-                                  form.assignedTransportGlobalId,
-                              )?.deliveryStations || []
-                            ).map((st) => (
-                              <option key={st.stationId} value={st.stationId}>
-                                {st.name}
-                                {st.city ? ` — ${st.city}` : ""}
-                                {st.pincode ? ` (${st.pincode})` : ""}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      </>
-                    )}
-                    <label>
-                      Service Area
-                      <input
-                        value={form.serviceArea}
-                        onChange={(e) => change("serviceArea", e.target.value)}
-                      />
-                    </label>
-                  </>
+                      {!transporterBusy && !transporterMatches.length && (form.pincode || form.city) && (
+                        <div className={transportRequired ? "resultBanner bad" : "resultBanner"} style={{ marginTop: 8 }}>
+                          No transporter is currently mapped. The system first checks the exact service pincode and, only if none is found, checks the city.
+                          {transportRequired ? " Add this pincode/city to a transporter before saving this outside-city customer." : ""}
+                        </div>
+                      )}
+                      <small className="fieldHint">
+                        Automatic rule: exact service pincode first; city fallback only when there is no exact-pincode transporter. All matches are mapped to the customer.
+                      </small>
+                    </div>
+                  </div>
                 )}
                 <label>
                   Customer Grade
@@ -2507,12 +2307,21 @@ export default function CustomerPage({
             {
               key: "transporter",
               label: "Transporter",
-              render: (r) => String(r?.partyType || "").toUpperCase() === "CREDITOR" ? <small>Not required</small> : (
-                <select onClick={(e) => e.stopPropagation()} value={rowDraftValue(r, "assignedTransport", r?.assignedTransport || "")} onChange={(e) => setRowDraft(r, "assignedTransport", e.target.value)}>
-                  <option value="">Select Transporter</option>
-                  {transporters.map((t) => <option key={t._id} value={t._id}>{t.name}</option>)}
-                </select>
-              ),
+              render: (r) => {
+                if (String(r?.partyType || "").toUpperCase() === "CREDITOR") return <small>Not required</small>;
+                const mapped = Array.isArray(r?.assignedTransporters) ? r.assignedTransporters : [];
+                if (!mapped.length) return <small>Not mapped</small>;
+                return (
+                  <div>
+                    {mapped.map((t, index) => (
+                      <div key={`${t.transporterId || t.globalTransporterId || index}`}>
+                        {t.transporterName || "Transporter"}
+                      </div>
+                    ))}
+                    <small>{r.transporterMatchType === "PINCODE" ? "Exact pincode" : r.transporterMatchType === "CITY" ? "City fallback" : "Auto mapped"}</small>
+                  </div>
+                );
+              },
             },
             {
               key: "salesperson",

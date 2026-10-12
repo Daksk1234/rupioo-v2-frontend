@@ -250,11 +250,11 @@ export default function LedgerPage({ page }) {
         .oldLedgerTitleRow strong{font-size:16px;}
         .oldLedgerCount{background:#eef2ff;color:#3730a3;font-weight:800;padding:5px 9px;border-radius:999px;font-size:10px;}
         .oldLedgerTableWrap{width:100%;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--card);}
-        .oldLedgerTable{width:100%;border-collapse:collapse;min-width:820px;}
+        .oldLedgerSummary{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:8px;margin:0 0 12px}.oldLedgerSummaryCard{border:1px solid var(--line);border-radius:10px;background:var(--card);padding:10px 12px}.oldLedgerSummaryCard span{display:block;font-size:9px;font-weight:800;color:var(--muted);text-transform:uppercase}.oldLedgerSummaryCard strong{display:block;margin-top:3px;font-size:15px}.oldLedgerSummaryCard.outstanding strong{color:#b42318}.oldLedgerTable{width:100%;border-collapse:collapse;min-width:940px;}
         .oldLedgerTable th{background:#f4f7f6;color:#0f172a;font-weight:800;text-transform:uppercase;font-size:10px;letter-spacing:.03em;border:1px solid #dfe4e8;padding:7px 8px;text-align:center;white-space:nowrap;}
         .oldLedgerTable td{border:1px solid #e6eaed;padding:7px 8px;font-size:12px;color:var(--text);vertical-align:top;}
         .oldLedgerTable td:nth-child(1),.oldLedgerTable td:nth-child(3),.oldLedgerTable td:nth-child(4){text-align:center;white-space:nowrap;}
-        .oldLedgerTable td:nth-child(5),.oldLedgerTable td:nth-child(6){text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+        .oldLedgerTable td:nth-child(5),.oldLedgerTable td:nth-child(6),.oldLedgerTable td:nth-child(7){text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
         .oldLedgerTable th:nth-child(2),.oldLedgerTable td:nth-child(2){width:42%;}
         .oldLedgerOpening td,.oldLedgerClosing td,.oldLedgerTotal td{font-weight:800;background:#fafafa;}
         .oldLedgerTotal td{background:#f1f5f9;}
@@ -377,6 +377,13 @@ export default function LedgerPage({ page }) {
         ) : !statement ? (
           <div className="oldLedgerEmpty">No ledger data available.</div>
         ) : (
+          <>
+          <div className="oldLedgerSummary oldLedgerNoPrint">
+            <div className="oldLedgerSummaryCard"><span>Opening</span><strong>{money(summary.openingDebit || summary.openingCredit)} {summary.openingDebit ? "DR" : summary.openingCredit ? "CR" : ""}</strong></div>
+            <div className="oldLedgerSummaryCard"><span>Period Debit</span><strong>{money(summary.movementDebit)}</strong></div>
+            <div className="oldLedgerSummaryCard"><span>Period Credit</span><strong>{money(summary.movementCredit)}</strong></div>
+            <div className={`oldLedgerSummaryCard ${entity.accountCode === "SYS_SUNDRY_DEBTORS" && summary.actualClosingType === "DR" ? "outstanding" : ""}`}><span>{entity.accountCode === "SYS_SUNDRY_DEBTORS" ? "Outstanding / Closing" : "Closing"}</span><strong>{money(summary.actualClosingBalance)} {summary.actualClosingType || ""}</strong></div>
+          </div>
           <div className="oldLedgerTableWrap">
             <table className="oldLedgerTable">
               <thead>
@@ -387,6 +394,7 @@ export default function LedgerPage({ page }) {
                   <th>Voucher No</th>
                   <th>Debit</th>
                   <th>Credit</th>
+                  <th>Balance</th>
                 </tr>
               </thead>
               <tbody>
@@ -397,6 +405,7 @@ export default function LedgerPage({ page }) {
                   <td />
                   <td>{summary.openingDebit ? money(summary.openingDebit) : ""}</td>
                   <td>{summary.openingCredit ? money(summary.openingCredit) : ""}</td>
+                  <td>{money(summary.openingDebit || summary.openingCredit)} {summary.openingDebit ? "DR" : summary.openingCredit ? "CR" : ""}</td>
                 </tr>
                 {rows.map((row, index) => {
                   const canOpenInvoice = row.sourceDocumentType === "SALES_INVOICE" && row.sourceDocumentId;
@@ -412,6 +421,7 @@ export default function LedgerPage({ page }) {
                       </td>
                       <td>{Number(row.debit || 0) ? money(row.debit) : ""}</td>
                       <td>{Number(row.credit || 0) ? money(row.credit) : ""}</td>
+                      <td>{money(row.runningBalance)} {row.runningBalanceType || ""}</td>
                     </tr>
                   );
                 })}
@@ -422,6 +432,7 @@ export default function LedgerPage({ page }) {
                   <td />
                   <td>{summary.showOnDebit ? money(summary.closingDiff) : ""}</td>
                   <td>{summary.showOnCredit ? money(summary.closingDiff) : ""}</td>
+                  <td>{money(summary.actualClosingBalance)} {summary.actualClosingType || ""}</td>
                 </tr>
                 <tr className="oldLedgerTotal">
                   <td />
@@ -430,10 +441,12 @@ export default function LedgerPage({ page }) {
                   <td />
                   <td>{money(summary.balancedTotal)}</td>
                   <td>{money(summary.balancedTotal)}</td>
+                  <td />
                 </tr>
               </tbody>
             </table>
           </div>
+          </>
         )}
       </section>
     </>

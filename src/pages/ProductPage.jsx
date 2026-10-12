@@ -13,6 +13,8 @@ import {
   ChevronUp,
   AlertTriangle,
   CheckCircle2,
+  FileText,
+  ImagePlus,
 } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import DataTable from "../components/DataTable.jsx";
@@ -25,7 +27,7 @@ import CreateLookupButton, {
   isLookupCreate,
   notifyLookupCreated,
 } from "../components/CreateLookupButton.jsx";
-import { api } from "../lib/api.js";
+import { api, apiBlob } from "../lib/api.js";
 import { isAdminUser } from "../lib/adminVisibility.js";
 
 const blank = {
@@ -62,6 +64,45 @@ const blank = {
   barcode: "",
   barcodeSource: "",
   status: "ACTIVE",
+};
+
+const PRODUCT_MEDIA_MAX_BYTES = 2 * 1024 * 1024;
+const PRODUCT_MEDIA_ACCEPT =
+  ".jpg,.jpeg,.png,.webp,.avif,.svg,.pdf,image/jpeg,image/png,image/webp,image/avif,image/svg+xml,application/pdf";
+const PRODUCT_MEDIA_EXTENSIONS = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".avif",
+  ".svg",
+  ".pdf",
+]);
+const PRODUCT_MEDIA_MIMES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/avif",
+  "image/svg+xml",
+  "application/pdf",
+]);
+
+const productMediaExt = (name = "") => {
+  const match = String(name || "").toLowerCase().match(/\.[^.]+$/);
+  return match ? match[0] : "";
+};
+
+const productMediaValid = (file) => {
+  if (!file || !PRODUCT_MEDIA_EXTENSIONS.has(productMediaExt(file.name))) return false;
+  const mime = String(file.type || "").toLowerCase();
+  return !mime || mime === "application/octet-stream" || PRODUCT_MEDIA_MIMES.has(mime);
+};
+
+const productMediaSizeText = (size = 0) => {
+  const bytes = Number(size || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 };
 
 const bulkFields = [
@@ -130,6 +171,40 @@ const saveCsvFile = (content, fileName) => {
   URL.revokeObjectURL(anchor.href);
 };
 
+const excelHtmlEsc = (value) => String(value ?? "")
+  .replaceAll("&", "&amp;")
+  .replaceAll("<", "&lt;")
+  .replaceAll(">", "&gt;")
+  .replaceAll('"', "&quot;");
+
+const saveExcelTableFile = (rows, fileName = "product-list.xls") => {
+  const headers = rows.length ? Object.keys(rows[0]) : [];
+  const headerHtml = headers
+    .map((header) => `<th>${excelHtmlEsc(header)}</th>`)
+    .join("");
+  const bodyHtml = rows
+    .map((row) => `<tr>${headers.map((header) => {
+      const value = row[header];
+      const isNumeric = typeof value === "number" && Number.isFinite(value);
+      return `<td${isNumeric ? ' style="mso-number-format:0.00"' : ""}>${excelHtmlEsc(value)}</td>`;
+    }).join("")}</tr>`)
+    .join("");
+
+  const html = `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+<head><meta charset="UTF-8"><style>table{border-collapse:collapse}th,td{border:1px solid #999;padding:5px 8px;white-space:nowrap}th{font-weight:700}</style></head>
+<body><table><thead><tr>${headerHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></body></html>`;
+
+  const blob = new Blob([`\uFEFF${html}`], {
+    type: "application/vnd.ms-excel;charset=utf-8",
+  });
+  const anchor = document.createElement("a");
+  anchor.href = URL.createObjectURL(blob);
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(anchor.href);
+};
+
 const normalizedHsn = (value) =>
   String(value || "")
     .replace(/[^0-9A-Za-z]/g, "")
@@ -178,6 +253,114 @@ function MiniBarcode({ value }) {
   );
 }
 
+function ProductMediaCard({ item, onRemove, disabled = false }) {
+  const [previewUrl, setPreviewUrl] = useState("");
+  const isImage = String(item?.mimeType || item?.file?.type || "").startsWith("image/");
+  const isPdf = String(item?.mimeType || item?.file?.type || "") === "application/pdf";
+
+  useEffect(() => {
+    let active = true;
+    let objectUrl = "";
+
+    const load = async () => {
+      try {
+        if (item?.file) {
+          objectUrl = URL.createObjectURL(item.file);
+          if (active) setPreviewUrl(objectUrl);
+          return;
+        }
+        if (item?.fileId) {
+          const { blob } = await apiBlob(`/files/${item.fileId}`);
+          if (!active) return;
+          objectUrl = URL.createObjectURL(blob);
+          setPreviewUrl(objectUrl);
+        }
+      } catch (_) {
+        if (active) setPreviewUrl("");
+      }
+    };
+
+    load();
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [item?.file, item?.fileId]);
+
+  const name = item?.originalName || item?.file?.name || "Product file";
+  const size = item?.size ?? item?.file?.size ?? 0;
+
+  return (
+    <div
+      style={{
+        border: "1px solid var(--border,#e5e7eb)",
+        borderRadius: 10,
+        padding: 8,
+        background: "var(--surface,#fff)",
+        minWidth: 150,
+        maxWidth: 190,
+      }}
+    >
+      <div
+        style={{
+          height: 112,
+          borderRadius: 8,
+          overflow: "hidden",
+          background: "#f8fafc",
+          display: "grid",
+          placeItems: "center",
+          border: "1px solid #eef2f7",
+        }}
+      >
+        {isImage && previewUrl ? (
+          <img
+            src={previewUrl}
+            alt={name}
+            style={{ width: "100%", height: "100%", objectFit: "contain" }}
+          />
+        ) : isPdf ? (
+          <div style={{ textAlign: "center", color: "#475569", fontWeight: 800, fontSize: 11 }}>
+            <FileText size={34} style={{ marginBottom: 5 }} />
+            <div>PDF</div>
+          </div>
+        ) : (
+          <div style={{ textAlign: "center", color: "#64748b", fontSize: 11 }}>
+            <ImagePlus size={30} style={{ marginBottom: 5 }} />
+            <div>IMAGE</div>
+          </div>
+        )}
+      </div>
+      <div style={{ marginTop: 7, fontSize: 11, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={name}>
+        {name}
+      </div>
+      <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>
+        {productMediaSizeText(size)}
+      </div>
+      <div style={{ display: "flex", gap: 6, marginTop: 7 }}>
+        {previewUrl && (
+          <button
+            type="button"
+            className="btn ghost"
+            style={{ padding: "5px 8px", fontSize: 10 }}
+            onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
+          >
+            View
+          </button>
+        )}
+        <button
+          type="button"
+          className="btn danger"
+          style={{ padding: "5px 8px", fontSize: 10 }}
+          disabled={disabled}
+          onClick={onRemove}
+        >
+          Remove
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function ProductPage() {
   const admin = isAdminUser();
   const [rows, setRows] = useState([]);
@@ -200,6 +383,10 @@ export default function ProductPage() {
   const [selected, setSelected] = useState([]);
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState({ page: 1, pages: 1, total: 0 });
+  const [productMedia, setProductMedia] = useState([]);
+  const [pendingProductFiles, setPendingProductFiles] = useState([]);
+  const [productMediaBusy, setProductMediaBusy] = useState(false);
+  const [productListDownloading, setProductListDownloading] = useState(false);
 
   const [bulkReviewOpen, setBulkReviewOpen] = useState(false);
   const [bulkStep, setBulkStep] = useState(1);
@@ -216,6 +403,7 @@ export default function ProductPage() {
   const identifierSeq = useRef(0);
   const skuManualRef = useRef(false);
   const barcodeManualRef = useRef(false);
+  const productMediaInput = useRef(null);
 
   const load = async (next = page) => {
     try {
@@ -233,6 +421,72 @@ export default function ProductPage() {
       setPage(data.meta?.page || next);
     } catch (error) {
       setMsg(error.message);
+    }
+  };
+
+  const downloadProductListExcel = async () => {
+    setProductListDownloading(true);
+    setMsg("");
+    try {
+      const limit = 200;
+      const first = await api(
+        `/products?q=${encodeURIComponent(q)}&page=1&limit=${limit}`,
+      );
+      const firstItems = Array.isArray(first?.items) ? first.items : [];
+      const pages = Math.max(1, Number(first?.meta?.pages || 1));
+
+      let allItems = [...firstItems];
+      if (pages > 1) {
+        const remaining = await Promise.all(
+          Array.from({ length: pages - 1 }, (_, index) =>
+            api(
+              `/products?q=${encodeURIComponent(q)}&page=${index + 2}&limit=${limit}`,
+            ),
+          ),
+        );
+        remaining.forEach((result) => {
+          if (Array.isArray(result?.items)) allItems.push(...result.items);
+        });
+      }
+
+      const exportRows = allItems.map((row) => {
+        const basicCode = String(row.basicUnit || row.unit || "").toUpperCase();
+        const packCode = String(row.packingUnit || "").toUpperCase();
+        const basicUnit = unitNameByCode.get(basicCode) || row.basicUnit || row.unit || "";
+        const packingUnit = unitNameByCode.get(packCode) || row.packingUnit || "";
+
+        const output = {
+          "PRODUCT NAME": row.name || "",
+          SKU: row.sku || "",
+          CATEGORY: row.category || "",
+          SUBCATEGORY: row.subCategory || "",
+          "HSN / SAC": row.hsnCode || "",
+          "GST %": Number(row.gstRate || 0),
+          "BARCODE / GTIN": row.barcode || "",
+          "BASIC UNIT": basicUnit,
+          "PACKING UNIT": packingUnit,
+          "QTY IN BAG": Number(row.qtyInBag || 0),
+          "CURRENT STOCK": Number(row.currentStock ?? row.openingStock ?? 0),
+          "AVG PURCHASE": Number(row.averagePurchasePrice || 0),
+          "LANDED COST": Number(row.landedCost || 0),
+          MRP: Number(row.mrp || 0),
+          STATUS: row.status || "",
+        };
+
+        if (admin) {
+          output["PROFIT HEALTH"] = `${row.pricing?.color || "BLUE"} ${Number(
+            row.pricing?.profitPct || 0,
+          ).toFixed(1)}%`;
+        }
+        return output;
+      });
+
+      saveExcelTableFile(exportRows, "product-list.xls");
+      setMsg(`${allItems.length} product(s) downloaded to Excel.`);
+    } catch (error) {
+      setMsg(error.message || "Unable to download product list");
+    } finally {
+      setProductListDownloading(false);
     }
   };
 
@@ -291,6 +545,13 @@ export default function ProductPage() {
           }
         : { ...blank },
     );
+    setProductMedia([]);
+    setPendingProductFiles([]);
+    if (row?._id) {
+      api(`/products/${row._id}/images`)
+        .then((data) => setProductMedia(data?.items || []))
+        .catch((error) => setMsg(error.message || "Unable to load product images/files"));
+    }
     setSkuManual(editing);
     setBarcodeManual(editing);
     skuManualRef.current = editing;
@@ -459,6 +720,47 @@ export default function ProductPage() {
   const setField = (key, value) =>
     setForm((current) => ({ ...current, [key]: value }));
 
+  const addProductFiles = (fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+
+    const accepted = [];
+    for (const file of files) {
+      if (!productMediaValid(file)) {
+        setMsg(`${file.name}: only JPG, JPEG, PNG, WEBP, AVIF, SVG and PDF are allowed`);
+        continue;
+      }
+      if (Number(file.size || 0) > PRODUCT_MEDIA_MAX_BYTES) {
+        setMsg(`${file.name}: maximum size is 2 MB per file`);
+        continue;
+      }
+      accepted.push(file);
+    }
+
+    if (accepted.length) {
+      setPendingProductFiles((current) => [...current, ...accepted]);
+      setMsg("");
+    }
+  };
+
+  const removeSavedProductMedia = async (media) => {
+    if (!edit?._id || !media?.fileId) return;
+    if (!confirm(`Remove ${media.originalName || "this product file"} from the product?`)) return;
+    setProductMediaBusy(true);
+    try {
+      await api(`/products/${edit._id}/images/${encodeURIComponent(media.fileId)}`, {
+        method: "DELETE",
+      });
+      setProductMedia((current) => current.filter((item) => item.fileId !== media.fileId));
+      setMsg("Product image/file removed");
+      await load(page);
+    } catch (error) {
+      setMsg(error.message || "Unable to remove product image/file");
+    } finally {
+      setProductMediaBusy(false);
+    }
+  };
+
   const save = async () => {
     try {
       if (!form.warehouseId) throw new Error("Warehouse is required for Product");
@@ -493,12 +795,46 @@ export default function ProductPage() {
         ...(admin ? { minimumProfitPct: Number(form.minimumProfitPct || 0) } : {}),
       };
 
+      const wasEditing = Boolean(edit);
       const saved = await api(edit ? `/products/${edit._id}` : "/products", {
         method: edit ? "PUT" : "POST",
         body: JSON.stringify(body),
       });
 
-      setMsg(edit ? "Product updated" : "Product created");
+      if (pendingProductFiles.length) {
+        setProductMediaBusy(true);
+        try {
+          const fd = new FormData();
+          pendingProductFiles.forEach((file) => fd.append("files", file));
+          const uploaded = await api(`/products/${saved._id}/images`, {
+            method: "POST",
+            body: fd,
+          });
+          setProductMedia((current) => [...current, ...(uploaded?.items || [])]);
+          setPendingProductFiles([]);
+        } catch (uploadError) {
+          // The product itself has already been saved. Switch into Edit mode so
+          // retrying the image upload cannot accidentally create a duplicate product.
+          setEdit(saved);
+          setForm((current) => ({
+            ...current,
+            ...saved,
+            purchaseAutomation: {
+              ...blank.purchaseAutomation,
+              ...(saved.purchaseAutomation || current.purchaseAutomation || {}),
+            },
+          }));
+          setMsg(
+            `Product ${wasEditing ? "updated" : "created"}, but image/file upload failed: ${uploadError.message}`,
+          );
+          await load(page);
+          return;
+        } finally {
+          setProductMediaBusy(false);
+        }
+      }
+
+      setMsg(wasEditing ? "Product updated" : "Product created");
       setShow(false);
       await load();
 
@@ -1646,6 +1982,77 @@ export default function ProductPage() {
               </label>}
             </div>
 
+            <div className="sectionLabel">7. Product Images / Files</div>
+            <div
+              style={{
+                border: "1px solid var(--border,#e5e7eb)",
+                borderRadius: 10,
+                padding: 12,
+                marginBottom: 14,
+                background: "var(--surface,#fff)",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+                <div>
+                  <strong>Multiple product images/files</strong>
+                  <div className="tableSubText" style={{ marginTop: 3 }}>
+                    JPG, JPEG, PNG, WEBP, AVIF, SVG or PDF • maximum 2 MB per file
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  disabled={productMediaBusy}
+                  onClick={() => productMediaInput.current?.click()}
+                >
+                  <Upload size={15} /> Add Images / Files
+                </button>
+                <input
+                  ref={productMediaInput}
+                  hidden
+                  type="file"
+                  multiple
+                  accept={PRODUCT_MEDIA_ACCEPT}
+                  onChange={(event) => {
+                    addProductFiles(event.target.files);
+                    event.target.value = "";
+                  }}
+                />
+              </div>
+
+              {(productMedia.length || pendingProductFiles.length) ? (
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 12 }}>
+                  {productMedia.map((media) => (
+                    <ProductMediaCard
+                      key={media.fileId}
+                      item={media}
+                      disabled={productMediaBusy}
+                      onRemove={() => removeSavedProductMedia(media)}
+                    />
+                  ))}
+                  {pendingProductFiles.map((file, index) => (
+                    <ProductMediaCard
+                      key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+                      item={{
+                        file,
+                        originalName: file.name,
+                        mimeType: file.type,
+                        size: file.size,
+                      }}
+                      disabled={productMediaBusy}
+                      onRemove={() =>
+                        setPendingProductFiles((current) => current.filter((_, fileIndex) => fileIndex !== index))
+                      }
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div style={{ marginTop: 12, padding: 16, textAlign: "center", border: "1px dashed #cbd5e1", borderRadius: 9, color: "#64748b", fontSize: 12 }}>
+                  No product images/files added yet.
+                </div>
+              )}
+            </div>
+
             <div className="formActions productEditorActions">
               {edit && (
                 <button className="btn danger productDeleteBtn" type="button" onClick={() => del(edit, { closeEditor: true })}>
@@ -1660,6 +2067,7 @@ export default function ProductPage() {
                 <button
                   className="btn primary"
                   disabled={
+                    productMediaBusy ||
                     !form.sku ||
                     !form.name ||
                     !form.basicUnit ||
@@ -1668,7 +2076,7 @@ export default function ProductPage() {
                   }
                   onClick={save}
                 >
-                  {edit ? "Update Product" : "Save Product"}
+                  {productMediaBusy ? "Uploading..." : edit ? "Update Product" : "Save Product"}
                 </button>
               </div>
             </div>
@@ -1689,6 +2097,15 @@ export default function ProductPage() {
               placeholder="Search SKU, product, category, HSN or barcode..."
             />
           </div>
+          <button
+            className="btn ghost"
+            type="button"
+            disabled={productListDownloading}
+            onClick={downloadProductListExcel}
+          >
+            <Download size={16} />
+            {productListDownloading ? "Downloading..." : "Download List"}
+          </button>
           <button className="btn ghost" onClick={() => load()}>
             <RefreshCw />
             Refresh

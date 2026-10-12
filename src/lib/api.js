@@ -1,4 +1,6 @@
-const CONFIGURED_API_URL = String(import.meta.env.VITE_API_URL || "http://localhost:5077/api").replace(/\/$/, "");
+const CONFIGURED_API_URL = String(
+  import.meta.env.VITE_API_URL || "http://localhost:5077/api",
+).replace(/\/$/, "");
 
 // Development/LAN installs often change IP addresses (for example after a router
 // reconnect). Keep the configured VITE_API_URL as the primary destination, but
@@ -152,9 +154,7 @@ export const updateSessionUser = (patch = {}) => {
     patch.allowedPermission ?? merged.allowedPermission,
   );
   const next =
-    merged.role === "MASTER"
-      ? merged
-      : { ...merged, allowedPermission };
+    merged.role === "MASTER" ? merged : { ...merged, allowedPermission };
 
   sessionStorage.setItem("rupioo_user", JSON.stringify(next));
   if (next.tenantId) {
@@ -222,13 +222,19 @@ export async function apiBlob(path, options = {}) {
     if (tenantId) headers["X-Tenant-Id"] = tenantId;
   }
 
-  const res = await fetchApi(path, { ...options, method: options.method || "GET" }, headers);
+  const res = await fetchApi(
+    path,
+    { ...options, method: options.method || "GET" },
+    headers,
+  );
   if (!res.ok) {
     const type = res.headers.get("content-type") || "";
     const payload = type.includes("application/json")
       ? await res.json()
       : await res.text();
-    throw new Error(payload?.message || payload || `Request failed ${res.status}`);
+    throw new Error(
+      payload?.message || payload || `Request failed ${res.status}`,
+    );
   }
 
   return {

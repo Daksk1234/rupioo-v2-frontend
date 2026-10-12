@@ -16,13 +16,6 @@ const profitBand = (value) => {
   return "RED";
 };
 
-const saleRateIncludingProfit = (saleRate, profitPercentage) => {
-  const rate = Number(saleRate || 0);
-  const profit = Math.max(3, Number(profitPercentage || 3));
-  return rate > 0 ? rate + (rate * profit / 100) : 0;
-};
-
-
 export default function PriceListPage() {
   const admin = isAdminUser();
   const [rows, setRows] = useState([]);
@@ -30,11 +23,10 @@ export default function PriceListPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [maxDiscount, setMaxDiscount] = useState(0);
+  const [grades, setGrades] = useState([]);
   const [fy, setFy] = useState(currentFinancialYear());
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState({ page: 1, pages: 1, total: 0 });
-  const [profitDrafts, setProfitDrafts] = useState({});
-  const [savingProfitId, setSavingProfitId] = useState("");
 
   const load = async (next = 1) => {
     setLoading(true);
@@ -45,8 +37,8 @@ export default function PriceListPage() {
       );
       const items = d.items || [];
       setRows(items);
-      setProfitDrafts(Object.fromEntries(items.map((row) => [String(row._id), String(Math.max(3, Number(row.profitPercentage || 3)))])));
       setMaxDiscount(Number(d.maxDiscount || 0));
+      setGrades(Array.isArray(d.grades) ? d.grades : []);
       setMeta(d.meta || { page: next, pages: 1, total: (d.items || []).length });
       setPage(d.meta?.page || next);
     } catch (e) {
@@ -60,35 +52,6 @@ export default function PriceListPage() {
     load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fy]);
-
-  const saveProfitPercentage = async (row) => {
-    const id = String(row?._id || "");
-    if (!id) return;
-    const raw = Number(profitDrafts[id]);
-    const profitPercentage = Number.isFinite(raw) ? Math.max(3, raw) : 3;
-    setProfitDrafts((prev) => ({ ...prev, [id]: String(profitPercentage) }));
-    if (Math.abs(profitPercentage - Math.max(3, Number(row.profitPercentage || 3))) < 0.0001) return;
-    setSavingProfitId(id);
-    setError("");
-    try {
-      await api("/catalog/old-dms-price-list/products", {
-        method: "PUT",
-        body: JSON.stringify({
-          financialYear: fy,
-          Products: [{
-            id,
-            profitPercentage,
-            changedField: "profitPercentage",
-          }],
-        }),
-      });
-      await load(page);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSavingProfitId("");
-    }
-  };
 
   const columns = useMemo(
     () => [
@@ -115,58 +78,37 @@ export default function PriceListPage() {
       {
         key: "profitPercentage",
         label: "Profit %",
-        render: (r) => {
-          const id = String(r._id);
-          const saving = savingProfitId === id;
-          return (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <input
-                type="number"
-                min="3"
-                step="0.01"
-                value={profitDrafts[id] ?? "3"}
-                disabled={saving}
-                onChange={(e) => setProfitDrafts((prev) => ({ ...prev, [id]: e.target.value }))}
-                onBlur={() => saveProfitPercentage(r)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    e.currentTarget.blur();
-                  }
-                }}
-                title="Minimum profit is 3%"
-                style={{ width: 84, minWidth: 84 }}
-              />
-              <span>%</span>
-              {saving && <span className="tableSubText">Saving…</span>}
-            </div>
-          );
-        },
+        render: (r) => (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input
+              type="number"
+              value={Number(r.profitPercentage || 3).toFixed(2)}
+              readOnly
+              title="Auto calculated from Market Sale Price and Landed Price. Minimum 3%."
+              style={{ width: 84, minWidth: 84, cursor: "default" }}
+            />
+            <span>%</span>
+          </div>
+        ),
       },
       {
-        key: "saleRateIncludingProfit",
-        label: "Sales Rate Including Profit %",
-        render: (r) => {
-          const id = String(r._id);
-          const profit = Math.max(3, Number(profitDrafts[id] ?? r.profitPercentage ?? 3));
-          const baseSaleRate = Number(r.averageSaleRate || r.salePrice || 0);
-          const calculated = saleRateIncludingProfit(baseSaleRate, profit);
-          return (
-            <div>
-              <strong>₹{calculated.toFixed(2)}</strong>
-              <span className="tableSubText">
-                ₹{baseSaleRate.toFixed(2)} + {profit.toFixed(2)}%
-              </span>
-            </div>
-          );
-        },
-      },
-      {
-        key: "averageSaleRate",
-        label: "Average Sale / Sale Rate",
+        key: "minimumSalePrice",
+        label: "Minimum Sale Price",
         render: (r) => (
           <div>
-            <strong>₹{Number(r.averageSaleRate || 0).toFixed(2)}</strong>
+            <strong>₹{Number(r.minimumSalePrice || 0).toFixed(2)}</strong>
+            <span className="tableSubText">
+              Landed ₹{Number(r.landedPrice || 0).toFixed(2)} + {Number(r.profitPercentage || 3).toFixed(2)}%
+            </span>
+          </div>
+        ),
+      },
+      {
+        key: "marketSalePrice",
+        label: "Market Sale Price",
+        render: (r) => (
+          <div>
+            <strong>₹{Number(r.marketSalePrice || 0).toFixed(2)}</strong>
             <span className="tableSubText">
               {Number(r.saleObservations || 0)} sale line{Number(r.saleObservations || 0) === 1 ? "" : "s"}
             </span>
@@ -184,6 +126,24 @@ export default function PriceListPage() {
         label: "Calculated MRP",
         render: (r) => `₹${Number(r.mrp || 0).toFixed(2)}`,
       },
+      {
+        key: "mrpBasicExGst",
+        label: "MRP Basic ex GST",
+        render: (r) => `₹${Number(r.mrpBasicExGst || 0).toFixed(2)}`,
+      },
+      ...grades.map((grade) => ({
+        key: `grade-${grade.code}`,
+        label: `${grade.code} Basic (${Number(grade.discountPct || 0)}%)`,
+        render: (r) => {
+          const row = (r.gradePrices || []).find((x) => String(x.code) === String(grade.code));
+          return (
+            <div>
+              <strong>₹{Number(row?.basicRate || 0).toFixed(2)}</strong>
+              <span className="tableSubText">Incl GST ₹{Number(row?.saleIncludingGst || 0).toFixed(2)}</span>
+            </div>
+          );
+        },
+      })),
       ...(admin ? [{
         key: "profitColorCode",
         label: "Band",
@@ -199,14 +159,14 @@ export default function PriceListPage() {
         ),
       },
     ],
-    [maxDiscount, admin, profitDrafts, savingProfitId, fy, page],
+    [maxDiscount, grades, admin],
   );
 
   return (
     <>
       <PageHeader
         title="Price List"
-        description="Profit % is editable with a minimum of 3%. Sales Rate Including Profit % = Sale Rate + (Sale Rate × Profit %)."
+        description="Market Sale Price is the average selling rate from posted invoices. Profit % is auto calculated from Market Sale Price and Landed Price with a minimum of 3%. Minimum Sale Price is Landed Price plus that Profit %."
         actions={false}
       />
 
@@ -214,9 +174,9 @@ export default function PriceListPage() {
 
       <section className="panel compactActionPanel">
         <div>
-          <strong>Editable Profit Pricing</strong>
+          <strong>Automatic Profit Pricing</strong>
           <span>
-            Average Purchase comes from posted purchase invoice lines for the selected FY. Profit % cannot be below 3%. Sales Rate Including Profit % is calculated from the Sale Rate, not from Average Purchase.
+            Market Sale Price is the simple average selling rate from posted Sales Invoice lines for the selected FY. Profit % = ((Market Sale Price - Landed Price) ÷ Landed Price) × 100 with a minimum of 3%. Minimum Sale Price = Landed Price + Profit %.
           </span>
         </div>
         <div style={{ display: "flex", flexDirection: "row", gap: 8, flexWrap: "wrap", alignItems: "center" }}>

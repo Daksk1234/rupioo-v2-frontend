@@ -203,6 +203,7 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
   const [selected, setSelected] = useState(new Set());
   const [detail, setDetail] = useState(null);
   const [packing, setPacking] = useState(null);
+  const [warehouseRelease, setWarehouseRelease] = useState(null);
   const [dispatch, setDispatch] = useState(null);
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -298,17 +299,52 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
     finally { setLoading(false); }
   };
 
-  const startPacking = (order) => mutate(
-    () => api(`/sales-app/order-flow/orders/${order._id}/packing/start?financialYear=${encodeURIComponent(fy)}`, { method: "POST", body: "{}" }),
-    `${order.orderNo}: warehouse packing started`,
-  );
+  const openWarehouseRelease = async (order) => {
+    setLoading(true); setMsg("");
+    try {
+      const preview = await api(`/sales-app/order-flow/orders/${order._id}/warehouse-preview?financialYear=${encodeURIComponent(fy)}`);
+      const numberPreview = preview?.customerGlobalId
+        ? await api(`/transactions/sales-invoices/next-number?financialYear=${encodeURIComponent(fy)}&customerGlobalId=${encodeURIComponent(preview.customerGlobalId)}`).catch(() => null)
+        : null;
+      setWarehouseRelease({
+        ...preview,
+        invoiceNo: numberPreview?.invoiceNo || preview?.invoiceNo || "AUTO ON GENERATE",
+        order,
+        items: (preview?.items || []).map((x) => ({ ...x, warehouseId: x.warehouseId || "" })),
+      });
+    } catch (e) { setMsg(e.message); }
+    finally { setLoading(false); }
+  };
+
+  const sendToWarehouse = () => {
+    const state = warehouseRelease;
+    if (!state) return;
+    if ((state.items || []).some((x) => !x.warehouseId)) { setMsg("Select a warehouse for every product"); return; }
+    mutate(
+      () => api(`/sales-app/order-flow/orders/${state.order._id}/release-to-warehouse?financialYear=${encodeURIComponent(fy)}`, {
+        method: "POST",
+        body: JSON.stringify({ items: state.items.map((x) => ({ productId: x.productId, warehouseId: x.warehouseId })) }),
+      }),
+      `${state.order.orderNo}: sent to warehouse`,
+    ).then(() => setWarehouseRelease(null));
+  };
 
   const openPacking = (order) => setPacking({
     order,
     packageCount: Number(order.packing?.packageCount || 0),
     actualWeight: Number(order.packing?.actualWeight || 0),
     remarks: "",
-    items: (order.items || []).map((x) => ({ productId: x.productId, name: x.nameSnapshot, orderedQty: Number(x.qty || 0), reservedQty: Number(x.reservedQty || 0), packedQty: Number(x.packedQty || x.reservedQty || x.qty || 0), shortageReason: x.shortageReason || "" })),
+    items: (order.items || []).map((x) => ({
+      productId: x.productId,
+      name: x.nameSnapshot,
+      orderedQty: Number(x.qty || 0),
+      reservedQty: Number(x.reservedQty || 0),
+      packedQty: Number(x.packedQty || x.reservedQty || x.qty || 0),
+      shortageReason: x.shortageReason || "",
+      warehouseId: x.warehouseId || "",
+      warehouseName: x.warehouseNameSnapshot || "",
+      warehouseStatus: x.warehouseStatus || "",
+    })),
   });
 
   const savePacking = () => {
@@ -511,17 +547,31 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
     );
   };
 
+  const cancelOrder = (order) => {
+    const hasInvoice = Boolean(invoiceIdFor(order));
+    const warning = hasInvoice
+      ? `Cancel Sales Order ${order.orderNo}? Its undelivered posted invoice will also be cancelled, accounting reversed and stock restored.`
+      : `Cancel Sales Order ${order.orderNo}? Reserved stock will be released.`;
+    if (!window.confirm(warning)) return;
+    transition(order, "CANCELLED", `${order.orderNo} cancelled successfully`);
+  };
+
+  const invoiceIdFor = (order) => order.invoice?.invoiceId || [...(order.invoices || [])].reverse().find((x) => x?.invoiceId)?.invoiceId || "";
+
   const actionsFor = (order) => {
     const status = upper(order.workflowStatus);
     if (status === "CREDIT_HOLD") return <span style={{ display: "inline-flex", gap: 5, flexWrap: "wrap" }}><ActionButton icon={CheckCircle2} tone="good" onClick={() => creditDecision(order, "APPROVE")}>Approve Credit</ActionButton><ActionButton tone="warn" onClick={() => creditDecision(order, "REJECT")}>Reject</ActionButton></span>;
     if (status === "OTP_PENDING") return <ActionButton icon={ShieldCheck} tone="blue" onClick={() => requestCustomerOtp(order)}>Customer OTP</ActionButton>;
-    if (status === "ORDER_PLACED" || status === "VERIFIED") return <ActionButton icon={CheckCircle2} tone="good" onClick={() => verifyReserve(order)}>Verify & Reserve</ActionButton>;
-    if (status === "STOCK_RESERVED") return <ActionButton icon={Send} tone="blue" onClick={() => transition(order, "SENT_TO_WAREHOUSE")}>Send Warehouse</ActionButton>;
-    if (["SENT_TO_WAREHOUSE", "PICKING"].includes(status)) return <ActionButton icon={Boxes} tone="blue" onClick={() => startPacking(order)}>Start Packing</ActionButton>;
-    if (status === "PACKING") return <ActionButton icon={PackageCheck} tone="good" onClick={() => openPacking(order)}>Complete Packing</ActionButton>;
+    if (["ORDER_PLACED", "VERIFIED", "STOCK_RESERVED"].includes(status)) return <ActionButton icon={Send} tone="blue" onClick={() => openWarehouseRelease(order)}>Send to Warehouse</ActionButton>;
+    if (["SENT_TO_WAREHOUSE", "PICKING", "PACKING"].includes(status)) return <ActionButton icon={PackageCheck} tone="good" onClick={() => openPacking(order)}>Mark Packed</ActionButton>;
     if (status === "PACKED") return <ActionButton icon={Send} tone="blue" onClick={() => transition(order, "SENT_TO_ORDER_DESK")}>Send Order Desk</ActionButton>;
-    if (status === "SENT_TO_ORDER_DESK") return <ActionButton icon={FileText} tone="good" onClick={() => navigate(`/dms/sales-invoices?orderId=${encodeURIComponent(order._id)}&financialYear=${encodeURIComponent(fy)}`)}>Generate Invoice</ActionButton>;
-    if (["INVOICED", "INVOICED_PARTIAL"].includes(status)) return <ActionButton icon={Truck} tone="blue" onClick={() => transition(order, "READY_FOR_DISPATCH")}>Ready Dispatch</ActionButton>;
+    if (status === "SENT_TO_ORDER_DESK" || status === "INVOICED_PARTIAL") return <ActionButton icon={FileText} tone="good" onClick={() => navigate(`/dms/sales-invoices?orderId=${encodeURIComponent(order._id)}&financialYear=${encodeURIComponent(fy)}`)}>Generate Invoice</ActionButton>;
+    if (status === "INVOICED") {
+      const invoiceId = invoiceIdFor(order);
+      return invoiceId
+        ? <ActionButton icon={Truck} tone="blue" onClick={() => navigate(`/dms/sales-invoices?deliverId=${encodeURIComponent(invoiceId)}&financialYear=${encodeURIComponent(fy)}`)}>Mark Delivered</ActionButton>
+        : <span style={{ fontSize: 10, color: "#6b7280" }}>Invoice posted</span>;
+    }
     if (status === "READY_FOR_DISPATCH") return <span style={{ fontSize: 10, fontWeight: 800, color: "#15803d" }}>Select for route</span>;
     return <span style={{ fontSize: 10, color: "#6b7280" }}>{order.nextAction || "View timeline"}</span>;
   };
@@ -576,7 +626,11 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
                 <td style={{ padding: 9 }}><Pill status={o.workflowStatus} /></td>
                 <td style={{ padding: 9 }}>{o.invoice?.invoiceNo || (o.invoices || []).map((x) => x.invoiceNo).filter(Boolean).join(", ") || "—"}</td>
                 <td style={{ padding: 9 }}>{actionsFor(o)}</td>
-                <td style={{ padding: 9, textAlign: "right" }}><span style={{ display: "inline-flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}><ActionButton tone="soft" onClick={() => openDetail(o)}>Timeline</ActionButton><ActionButton icon={Trash2} tone="warn" onClick={() => deleteOrder(o)}>Delete</ActionButton></span></td>
+                <td style={{ padding: 9, textAlign: "right" }}><span style={{ display: "inline-flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                  <ActionButton tone="soft" onClick={() => openDetail(o)}>Timeline</ActionButton>
+                  {!['DELIVERED','CLOSED','CANCELLED','REJECTED'].includes(upper(o.workflowStatus)) ? <ActionButton tone="warn" onClick={() => cancelOrder(o)}>Cancel</ActionButton> : null}
+                  {!['DELIVERED','CLOSED'].includes(upper(o.workflowStatus)) && !invoiceIdFor(o) ? <ActionButton icon={Trash2} tone="warn" onClick={() => deleteOrder(o)}>Delete</ActionButton> : null}
+                </span></td>
               </tr>
             ))}
             {!filtered.length ? <tr><td colSpan={10} style={{ padding: 30, textAlign: "center", color: "#94a3b8" }}>{loading ? "Loading…" : "No orders in this queue"}</td></tr> : null}
@@ -661,6 +715,30 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
         </div>
       </Modal> : null}
 
+      {warehouseRelease ? <Modal title={`Send to Warehouse • ${warehouseRelease.orderNo || warehouseRelease.order?.orderNo || ""}`} onClose={() => setWarehouseRelease(null)} width={900}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 8, marginBottom: 12 }}>
+          {[
+            ["Party Name", warehouseRelease.partyName || "—"],
+            ["Invoice No.", warehouseRelease.invoiceNo || "AUTO ON GENERATE"],
+            ["Date", warehouseRelease.date ? new Date(warehouseRelease.date).toLocaleDateString("en-IN") : "—"],
+          ].map(([label, value]) => <div key={label} style={{ border: "1px solid #e5e7eb", background: "#f8fafc", borderRadius: 8, padding: 9 }}><div style={{ fontSize: 8.5, color: "#64748b", fontWeight: 900 }}>{label}</div><div style={{ marginTop: 4, fontSize: 12, fontWeight: 900 }}>{value}</div></div>)}
+        </div>
+        <div style={{ fontSize: 10, color: "#64748b", marginBottom: 8 }}>Choose the warehouse separately for every product. Different products in the same order may be routed to different warehouses.</div>
+        <div style={{ overflowX: "auto", border: "1px solid #e5e7eb", borderRadius: 8 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720, fontSize: 10 }}>
+            <thead><tr style={{ background: "#f8fafc" }}><th style={{ textAlign: "left", padding: 8 }}>Product</th><th style={{ textAlign: "left", padding: 8 }}>HSN</th><th style={{ textAlign: "right", padding: 8 }}>Qty</th><th style={{ textAlign: "right", padding: 8 }}>Basic Rate</th><th style={{ textAlign: "left", padding: 8 }}>Warehouse</th></tr></thead>
+            <tbody>{(warehouseRelease.items || []).map((x, i) => <tr key={`${x.productId}-${i}`} style={{ borderTop: "1px solid #f1f5f9" }}>
+              <td style={{ padding: 8, fontWeight: 800 }}>{x.productName}</td>
+              <td style={{ padding: 8 }}>{x.productHsn || "—"}</td>
+              <td style={{ padding: 8, textAlign: "right" }}>{Number(x.qty || 0)}</td>
+              <td style={{ padding: 8, textAlign: "right" }}>{money(x.basicRate)}</td>
+              <td style={{ padding: 8 }}><select value={x.warehouseId || ""} onChange={(e) => setWarehouseRelease((old) => ({ ...old, items: old.items.map((row, index) => index === i ? { ...row, warehouseId: e.target.value } : row) }))} style={{ width: "100%", minWidth: 180, padding: 7, border: "1px solid #d1d5db", borderRadius: 7 }}><option value="">Select Warehouse</option>{(warehouseRelease.warehouses || []).map((w) => <option key={w._id} value={w._id}>{w.name}</option>)}</select></td>
+            </tr>)}</tbody>
+          </table>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}><ActionButton tone="soft" onClick={() => setWarehouseRelease(null)}>Cancel</ActionButton><ActionButton icon={Send} tone="blue" onClick={sendToWarehouse}>Send to Warehouse</ActionButton></div>
+      </Modal> : null}
+
       {detail ? <Modal title={`Order ${detail.order?.orderNo || ""}`} onClose={() => setDetail(null)} width={860}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8, marginBottom: 14 }}>
           {[['Customer', detail.order?.customerNameSnapshot], ['Status', upper(detail.order?.workflowStatus).replaceAll('_',' ')], ['Ordered', detail.order?.orderedQty], ['Packed', detail.order?.packedQty], ['Invoiced', detail.order?.invoicedQty], ['Amount', money(detail.order?.grandTotal)]].map(([k,v]) => <div key={k} style={{ background: "#f8fafc", borderRadius: 8, padding: 9 }}><div style={{ fontSize: 9, color: "#64748b", textTransform: "uppercase", fontWeight: 800 }}>{k}</div><div style={{ marginTop: 4, fontSize: 12, fontWeight: 900 }}>{v ?? '—'}</div></div>)}
@@ -673,7 +751,7 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
 
       {packing ? <Modal title={`Complete Packing • ${packing.order.orderNo}`} onClose={() => setPacking(null)}>
         <div style={{ fontSize: 10, color: "#64748b", marginBottom: 10 }}>Enter actual packed quantities. Invoice generation will use these quantities, not the original ordered quantities.</div>
-        {(packing.items || []).map((x, i) => <div key={x.productId} style={{ display: "grid", gridTemplateColumns: "1fr 100px 1fr", gap: 8, alignItems: "end", borderBottom: "1px solid #f1f5f9", padding: "8px 0" }}><div><b style={{ fontSize: 11 }}>{x.name}</b><div style={{ fontSize: 9, color: "#64748b" }}>Ordered {x.orderedQty} • Reserved {x.reservedQty}</div></div><label style={{ fontSize: 9, fontWeight: 800 }}>Packed Qty<input type="number" min="0" max={x.reservedQty} step="any" value={x.packedQty} onChange={(e) => setPacking((old) => ({ ...old, items: old.items.map((row, index) => index === i ? { ...row, packedQty: e.target.value } : row) }))} style={{ display: "block", width: "100%", marginTop: 3, padding: 7, border: "1px solid #d1d5db", borderRadius: 6 }} /></label><label style={{ fontSize: 9, fontWeight: 800 }}>Shortage / Remark<input value={x.shortageReason} onChange={(e) => setPacking((old) => ({ ...old, items: old.items.map((row, index) => index === i ? { ...row, shortageReason: e.target.value } : row) }))} style={{ display: "block", width: "100%", marginTop: 3, padding: 7, border: "1px solid #d1d5db", borderRadius: 6 }} /></label></div>)}
+        {(packing.items || []).map((x, i) => <div key={x.productId} style={{ display: "grid", gridTemplateColumns: "minmax(180px,1fr) 100px minmax(150px,1fr)", gap: 8, alignItems: "end", borderBottom: "1px solid #f1f5f9", padding: "8px 0" }}><div><b style={{ fontSize: 11 }}>{x.name}</b><div style={{ fontSize: 9, color: "#64748b" }}>Ordered {x.orderedQty} • Reserved {x.reservedQty}</div><div style={{ fontSize: 9, color: "#2563eb", fontWeight: 800, marginTop: 2 }}>{x.warehouseName || "Warehouse not assigned"}{x.warehouseStatus ? ` • ${upper(x.warehouseStatus).replaceAll("_", " ")}` : ""}</div></div><label style={{ fontSize: 9, fontWeight: 800 }}>Packed Qty<input type="number" min="0" max={x.reservedQty} step="any" value={x.packedQty} onChange={(e) => setPacking((old) => ({ ...old, items: old.items.map((row, index) => index === i ? { ...row, packedQty: e.target.value } : row) }))} style={{ display: "block", width: "100%", marginTop: 3, padding: 7, border: "1px solid #d1d5db", borderRadius: 6 }} /></label><label style={{ fontSize: 9, fontWeight: 800 }}>Shortage / Remark<input value={x.shortageReason} onChange={(e) => setPacking((old) => ({ ...old, items: old.items.map((row, index) => index === i ? { ...row, shortageReason: e.target.value } : row) }))} style={{ display: "block", width: "100%", marginTop: 3, padding: 7, border: "1px solid #d1d5db", borderRadius: 6 }} /></label></div>)}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}><label style={{ fontSize: 9, fontWeight: 800 }}>Packages<input type="number" min="0" value={packing.packageCount} onChange={(e) => setPacking((old) => ({ ...old, packageCount: e.target.value }))} style={{ display: "block", width: "100%", marginTop: 3, padding: 8, border: "1px solid #d1d5db", borderRadius: 7 }} /></label><label style={{ fontSize: 9, fontWeight: 800 }}>Actual Weight<input type="number" min="0" step="any" value={packing.actualWeight} onChange={(e) => setPacking((old) => ({ ...old, actualWeight: e.target.value }))} style={{ display: "block", width: "100%", marginTop: 3, padding: 8, border: "1px solid #d1d5db", borderRadius: 7 }} /></label></div>
         <label style={{ display: "block", fontSize: 9, fontWeight: 800, marginTop: 8 }}>Packing Remark<textarea value={packing.remarks} onChange={(e) => setPacking((old) => ({ ...old, remarks: e.target.value }))} rows={2} style={{ display: "block", width: "100%", marginTop: 3, padding: 8, border: "1px solid #d1d5db", borderRadius: 7 }} /></label>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}><ActionButton tone="soft" onClick={() => setPacking(null)}>Cancel</ActionButton><ActionButton icon={PackageCheck} tone="good" onClick={savePacking}>Save Packed Qty</ActionButton></div>
