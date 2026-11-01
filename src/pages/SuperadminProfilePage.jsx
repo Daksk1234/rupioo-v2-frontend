@@ -85,6 +85,8 @@ export default function SuperadminProfilePage() {
         gstConstitution: company.gstVerification?.constitution || "",
         financialYear: company.financialYear || "",
         financialYears: Array.isArray(company.financialYears) ? company.financialYears : [],
+        firstCashFinancialYear: company.firstCashFinancialYear || [...(company.financialYears||[])].sort()[0] || company.financialYear || "",
+        firstCashOpeningBalance: company.firstCashOpeningBalance ?? 0,
         salesInvoicePrefix: company.salesInvoicePrefix || "",
         salesInvoiceSuffix: company.salesInvoiceSuffix || "",
         salesInvoiceStartingNumber: Number(company.salesInvoiceStartingNumber || 1),
@@ -505,6 +507,13 @@ export default function SuperadminProfilePage() {
         </section>
 
         <section className="panel profileCard profileWide">
+          <div className="profileInfoList profileInvoiceSeries">
+            <div><span>First Financial Year — Cash</span><strong>{company.firstCashFinancialYear||[...(company.financialYears||[])].sort()[0]||"—"}</strong></div>
+            <div><span>Cash Opening Balance</span><strong>₹{Number(company.firstCashOpeningBalance||0).toLocaleString("en-IN",{minimumFractionDigits:2})}</strong></div>
+          </div>
+        </section>
+
+        <section className="panel profileCard profileWide">
           <h3><CalendarDays size={16}/>Stock Age Rules</h3>
           <div className="profileInfoList profileInvoiceSeries">
             <div><span>Overdue Days</span><strong>{Number(company.stockOverdueDays || 60)} DAYS</strong></div>
@@ -624,6 +633,10 @@ export default function SuperadminProfilePage() {
               <label>Authorized Signature<div className="lookupSelectRow"><input value={form.signatureFileId || ""} readOnly placeholder="Not uploaded"/><label className="btn ghost" style={{cursor:"pointer"}}><UploadCloud size={14}/>Upload<input type="file" accept="image/*" hidden onChange={e=>uploadInvoiceAsset(e.target.files?.[0],"signatureFileId")}/></label></div></label>
               <label className="wideField">Registered Address<textarea value={form.registeredAddress || ""} onChange={e => setForm({...form,registeredAddress:e.target.value})}/></label>
               <label className="wideField">Invoice Terms & Conditions<textarea value={form.invoiceTerms || ""} onChange={e => setForm({...form,invoiceTerms:e.target.value})}/></label>
+            </div>
+            <div className="formGrid compactGrid">
+              <label>First Financial Year for Cash Opening<select value={form.firstCashFinancialYear||""} onChange={e=>setForm({...form,firstCashFinancialYear:e.target.value})}>{[...(form.financialYears||[])].filter(Boolean).sort().slice(0,1).map(y=><option key={y} value={y}>{y}</option>)}{!(form.financialYears||[]).length&&<option value={form.firstCashFinancialYear||form.financialYear}>{form.firstCashFinancialYear||form.financialYear}</option>}</select></label>
+              <label>First-Year Cash Opening Balance (₹)<input type="number" min="0" step="0.01" value={form.firstCashOpeningBalance??0} onChange={e=>setForm({...form,firstCashOpeningBalance:e.target.value})}/></label>
             </div>
             <div className="profileFyEditor">
               <div className="sectionHeader"><h3>Financial Years</h3><button className="btn ghost" onClick={addYear}>Add Year</button></div>

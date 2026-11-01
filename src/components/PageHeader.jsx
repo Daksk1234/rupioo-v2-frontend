@@ -25,7 +25,8 @@ export default function PageHeader({
   const visibleUpload=canCreate?onUpload:null;
   const visibleExport=canDownload?onExport:null;
   const anyAction = Boolean(visibleAdd || onFilter || visibleUpload || visibleExport || onMore);
-  const hasCopy=Boolean(title||description||eyebrow);
+  // V2 clean-page standard: no page headings or descriptive subtitles.
+  const hasCopy=false;
 
   if (!hasCopy && (!actions || !anyAction)) return null;
 

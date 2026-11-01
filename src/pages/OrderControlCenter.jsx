@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
+import WarehouseClosingReview from "../components/WarehouseClosingReview.jsx";
 import { api, getUser } from "../lib/api.js";
 import { currentFinancialYear, financialYearFromDate, financialYearOptions } from "../lib/financialYear.js";
 import { fetchTransactionParties, partyOptionLabel } from "../lib/partyDirectory.js";
@@ -41,17 +42,22 @@ const localToday = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 };
 const round2 = (v) => Math.round((Number(v || 0) + Number.EPSILON) * 100) / 100;
-const newOrderRow = () => ({ productId: "", qty: 1, rate: 0, discountPct: 0, gstRate: 0, unit: "PCS" });
+const newOrderRow = () => ({ productId: "", qty: 1, rate: 0, gradeDiscountPct: 0, discountPct: 0, gstRate: 0, unit: "PCS" });
 const orderLine = (row) => {
   const qty = Math.max(0, Number(row?.qty || 0));
   const rate = Math.max(0, Number(row?.rate || 0));
+  const gradePct = Math.min(100, Math.max(0, Number(row?.gradeDiscountPct || 0)));
   const discountPct = Math.min(100, Math.max(0, Number(row?.discountPct || 0)));
   const gstRate = Math.max(0, Number(row?.gstRate || 0));
   const basic = round2(qty * rate);
-  const discount = round2(basic * discountPct / 100);
-  const taxable = round2(basic - discount);
+  // Apply the customer grade once to the ex-GST unit price, then any truly
+  // additional discount. This matches the invoice's displayed Basic ₹.
+  const afterGradeRate = round2(rate * (1 - gradePct / 100));
+  const afterLineRate = round2(afterGradeRate * (1 - discountPct / 100));
+  const taxable = round2(qty * afterLineRate);
+  const discount = round2(basic - taxable);
   const tax = round2(taxable * gstRate / 100);
-  return { basic, discount, taxable, tax, total: round2(taxable + tax) };
+  return { basic, afterGradeRate, discount, taxable, tax, total: round2(taxable + tax) };
 };
 const fetchOrderProducts = async (financialYear) => {
   const limit = 200;
@@ -72,6 +78,7 @@ const fetchOrderProducts = async (financialYear) => {
 };
 
 const TAB_CONFIG = {
+  AUDIT: { label:"Warehouse Stock Audit", icon:Boxes, statuses:[] },
   ORDERS: {
     label: "All Orders",
     icon: ClipboardCheck,
@@ -100,7 +107,7 @@ const TAB_CONFIG = {
   RETURNS: {
     label: "Returns",
     icon: RefreshCw,
-    statuses: ["DELIVERY_FAILED", "RETURN_IN_TRANSIT", "RETURNED_TO_WAREHOUSE", "CREDIT_NOTE_PENDING"],
+    statuses: ["CANCELLATION_IN_PROCESS", "DELIVERY_FAILED", "RETURN_IN_TRANSIT", "RETURNED_TO_WAREHOUSE", "CREDIT_NOTE_PENDING"],
   },
   CLOSED: {
     label: "Completed",
@@ -292,6 +299,22 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
     finally { setLoading(false); }
   };
 
+  // Verify an OTP the customer already sees in their Customer App without
+  // invalidating it by automatically generating a fresh challenge.
+  const verifyExistingCustomerOtp = async (order) => {
+    const code = window.prompt(`Enter the 6-digit OTP that the customer has given to the Salesperson / Superadmin for ${order.orderNo}.`);
+    if (code == null || !code.trim()) return;
+    if (!/^\d{6}$/.test(code.trim())) { setMsg("Enter the six-digit customer OTP"); return; }
+    setLoading(true);setMsg("");
+    try {
+      await api(`/sales-app/order-flow/orders/${order._id}/customer-otp/verify?financialYear=${encodeURIComponent(fy)}`, {
+        method:"POST",body:JSON.stringify({code:code.trim()})
+      });
+      setMsg(`${order.orderNo}: Customer OTP verified`);
+      await load(true);
+    } catch(e){setMsg(e.message)} finally {setLoading(false)}
+  };
+
   const openDetail = async (order) => {
     setLoading(true); setMsg("");
     try { setDetail(await api(`/sales-app/order-flow/orders/${order._id}?financialYear=${encodeURIComponent(fy)}`)); }
@@ -397,7 +420,7 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
     setCreateOrder((old) => old ? ({
       ...old,
       customerGlobalId,
-      items: old.items.map((row) => row.productId ? ({ ...row, discountPct: gradeDiscountPct }) : row),
+      items: old.items.map((row) => row.productId ? ({ ...row, gradeDiscountPct }) : row),
     }) : old);
   };
 
@@ -408,13 +431,14 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
     const gstRate = Math.max(0, Number(product.gstRate || 0));
     const mrp = Math.max(0, Number(product.mrp || 0));
     const fallbackBasic = gstRate > 0 ? mrp / (1 + gstRate / 100) : mrp;
-    const rate = Math.max(0, Number(product.salePrice || product.basicSaleRate || product.salesRate || fallbackBasic || 0));
+    const rate = Math.max(0, Number(mrp > 0 ? fallbackBasic : (product.salePrice || product.basicSaleRate || product.salesRate || 0)));
     setCreateOrderItem(index, {
       productId: String(product._id),
       rate: round2(rate),
       gstRate,
       unit: product.basicUnit || product.unit || "PCS",
-      discountPct: Math.max(0, Number(customer?.gradeDiscountPct || 0)),
+      gradeDiscountPct: Math.max(0, Number(customer?.gradeDiscountPct || 0)),
+      discountPct: 0,
     });
   };
 
@@ -467,8 +491,10 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
           hsnCode: product?.hsnCode || "",
           qty: Number(row.qty),
           unit: row.unit || product?.basicUnit || product?.unit || "PCS",
-          rate: Number(row.rate || 0),
-          basicRate: Number(row.rate || 0),
+          listRate: Number(row.rate || 0),
+          rate: totals.afterGradeRate,
+          basicRate: totals.afterGradeRate,
+          gradeDiscountPct: Number(row.gradeDiscountPct || 0),
           discountPct: Number(row.discountPct || 0),
           gstRate: Number(row.gstRate || 0),
           taxable: totals.taxable,
@@ -547,32 +573,41 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
     );
   };
 
-  const cancelOrder = (order) => {
-    const hasInvoice = Boolean(invoiceIdFor(order));
-    const warning = hasInvoice
-      ? `Cancel Sales Order ${order.orderNo}? Its undelivered posted invoice will also be cancelled, accounting reversed and stock restored.`
-      : `Cancel Sales Order ${order.orderNo}? Reserved stock will be released.`;
-    if (!window.confirm(warning)) return;
-    transition(order, "CANCELLED", `${order.orderNo} cancelled successfully`);
+  const cancelOrder = async (order) => {
+    const reason=window.prompt(`Reason for cancelling ${order.orderNo}:`);
+    if (!reason?.trim()) return;
+    const isSalesperson=['SALESPERSON','SALES_PERSON'].includes(upper(user?.role));
+    let code='';
+    if(isSalesperson){
+      try{await api(`/sales-app/order-flow/phase2/cancellation/${order._id}/customer-otp?financialYear=${encodeURIComponent(order.financialYear||fy)}`,{method:'POST',body:'{}'});
+        code=window.prompt('Ask the customer for the cancellation OTP shown in Customer App:')||'';
+        if(!code)return;
+      }catch(e){setMsg(e.message);return}
+    }
+    mutate(()=>api(`/sales-app/order-flow/phase2/cancellation/${order._id}/request?financialYear=${encodeURIComponent(order.financialYear||fy)}`,{method:'POST',body:JSON.stringify({source:isSalesperson?'SALESPERSON':'ORDER_DESK',reason,remarks:reason,...(isSalesperson?{code}:{})})}),`Cancellation requested for ${order.orderNo}`);
   };
+  const approveCustomerCancellation=(order)=>{
+    const remarks=window.prompt(`Contact customer ${order.customerNameSnapshot} before proceeding. Enter confirmed cancellation reason:`);
+    if(!remarks?.trim())return;
+    mutate(()=>api(`/sales-app/order-flow/phase2/cancellation/${order._id}/approve-customer?financialYear=${encodeURIComponent(order.financialYear||fy)}`,{method:'POST',body:JSON.stringify({customerContacted:true,remarks})}),`Customer cancellation approved: ${order.orderNo}`);
+  };
+  const finalizeCancellation=(order)=>mutate(()=>api(`/sales-app/order-flow/phase2/cancellation/${order._id}/finalize?financialYear=${encodeURIComponent(order.financialYear||fy)}`,{method:'POST',body:'{}'}),`Cancellation finalized: ${order.orderNo}`);
 
   const invoiceIdFor = (order) => order.invoice?.invoiceId || [...(order.invoices || [])].reverse().find((x) => x?.invoiceId)?.invoiceId || "";
 
   const actionsFor = (order) => {
     const status = upper(order.workflowStatus);
+    if(status === 'CANCELLATION_IN_PROCESS')return <span style={{display:'inline-flex',gap:5,flexWrap:'wrap'}}>{upper(order.cancellation?.source)==='CUSTOMER'&&upper(order.cancellation?.status)!=='APPROVED'?<ActionButton tone="blue" onClick={()=>approveCustomerCancellation(order)}>Confirm Customer Contact</ActionButton>:<ActionButton tone="warn" onClick={()=>finalizeCancellation(order)}>Finalize After Stock Return</ActionButton>}</span>;
     if (status === "CREDIT_HOLD") return <span style={{ display: "inline-flex", gap: 5, flexWrap: "wrap" }}><ActionButton icon={CheckCircle2} tone="good" onClick={() => creditDecision(order, "APPROVE")}>Approve Credit</ActionButton><ActionButton tone="warn" onClick={() => creditDecision(order, "REJECT")}>Reject</ActionButton></span>;
-    if (status === "OTP_PENDING") return <ActionButton icon={ShieldCheck} tone="blue" onClick={() => requestCustomerOtp(order)}>Customer OTP</ActionButton>;
+    if (status === "OTP_PENDING") return <span style={{display:"inline-flex",gap:5,flexWrap:"wrap"}}><ActionButton icon={ShieldCheck} tone="blue" onClick={() => verifyExistingCustomerOtp(order)}>Verify Customer OTP</ActionButton><ActionButton tone="warn" onClick={() => requestCustomerOtp(order)}>Generate / Resend</ActionButton></span>;
     if (["ORDER_PLACED", "VERIFIED", "STOCK_RESERVED"].includes(status)) return <ActionButton icon={Send} tone="blue" onClick={() => openWarehouseRelease(order)}>Send to Warehouse</ActionButton>;
-    if (["SENT_TO_WAREHOUSE", "PICKING", "PACKING"].includes(status)) return <ActionButton icon={PackageCheck} tone="good" onClick={() => openPacking(order)}>Mark Packed</ActionButton>;
-    if (status === "PACKED") return <ActionButton icon={Send} tone="blue" onClick={() => transition(order, "SENT_TO_ORDER_DESK")}>Send Order Desk</ActionButton>;
+    if (["SENT_TO_WAREHOUSE", "PICKING", "PACKING"].includes(status)) return <span style={{fontSize:11,color:"#64748b"}}>Packing / transfers in Warehouse App</span>;
+    if (status === "PACKED") return <span style={{fontSize:11,color:"#64748b"}}>Returning to Order Desk</span>;
     if (status === "SENT_TO_ORDER_DESK" || status === "INVOICED_PARTIAL") return <ActionButton icon={FileText} tone="good" onClick={() => navigate(`/dms/sales-invoices?orderId=${encodeURIComponent(order._id)}&financialYear=${encodeURIComponent(fy)}`)}>Generate Invoice</ActionButton>;
     if (status === "INVOICED") {
-      const invoiceId = invoiceIdFor(order);
-      return invoiceId
-        ? <ActionButton icon={Truck} tone="blue" onClick={() => navigate(`/dms/sales-invoices?deliverId=${encodeURIComponent(invoiceId)}&financialYear=${encodeURIComponent(fy)}`)}>Mark Delivered</ActionButton>
-        : <span style={{ fontSize: 10, color: "#6b7280" }}>Invoice posted</span>;
+      return <span style={{fontSize:11,color:"#0f766e",fontWeight:700}}>Pending • Main Warehouse assigns Delivery Boy</span>;
     }
-    if (status === "READY_FOR_DISPATCH") return <span style={{ fontSize: 10, fontWeight: 800, color: "#15803d" }}>Select for route</span>;
+    if (status === "READY_FOR_DISPATCH") return <span style={{ fontSize: 10, fontWeight: 800, color: "#15803d" }}>Main Warehouse delivery assignment</span>;
     return <span style={{ fontSize: 10, color: "#6b7280" }}>{order.nextAction || "View timeline"}</span>;
   };
 
@@ -581,7 +616,7 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
       <PageHeader title="Order Control Center" subtitle="Order → Warehouse → Packing → Invoice → Dispatch → Delivery → Return / Credit Note" />
 
       <div style={{ marginBottom: 12, padding: 12, border: "1px solid #dbeafe", background: "#eff6ff", borderRadius: 10, fontSize: 11, lineHeight: 1.5 }}>
-        <b>Two billing modes are active:</b> Order-based billing runs through this control center. Walk-in / cash / doorstep sales can still be billed immediately from <button type="button" onClick={() => navigate("/dms/sales-invoices?create=1")} style={{ border: 0, background: "transparent", color: "#1d4ed8", padding: 0, fontWeight: 900, cursor: "pointer" }}>Direct Sales Invoice</button> without creating an order.
+        <b>Order Desk invoice stays Pending until delivery:</b> Order-based billing runs through this control center. Walk-in / cash / doorstep sales can still be billed immediately from <button type="button" onClick={() => navigate("/dms/sales-invoices?create=1")} style={{ border: 0, background: "transparent", color: "#1d4ed8", padding: 0, fontWeight: 900, cursor: "pointer" }}>Direct Sales Invoice</button> without creating an order.
       </div>
 
       {msg ? <div style={{ marginBottom: 10, padding: "9px 11px", borderRadius: 8, background: msg.toLowerCase().includes("error") ? "#fef2f2" : "#f8fafc", border: "1px solid #e5e7eb", fontSize: 11 }}>{msg}</div> : null}
@@ -598,7 +633,7 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
         </div>
         <ActionButton icon={Plus} tone="good" onClick={openCreateOrder} disabled={createOrderLoading}>Create Order</ActionButton>
         <ActionButton icon={RefreshCw} tone="soft" onClick={() => load()} disabled={loading}>Refresh</ActionButton>
-        {tab === "DISPATCH" ? <ActionButton icon={Route} tone="good" onClick={openDispatch}>Create Optimized Route ({selected.size})</ActionButton> : null}
+        {tab === "DISPATCH" ? <span style={{fontSize:11,color:"#0f766e",fontWeight:700}}>Delivery assignment is controlled by the Main Warehouse App</span> : null}
         <ActionButton icon={MapPinned} tone="soft" onClick={() => navigate(`/dms/dispatch?deliveryApp=1&financialYear=${encodeURIComponent(fy)}`)}>Delivery App</ActionButton>
       </div>
 
@@ -609,7 +644,7 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
         })}
       </div>
 
-      <div style={{ overflowX: "auto", border: "1px solid #e5e7eb", borderRadius: 10, background: "white" }}>
+      {tab === "AUDIT" ? <WarehouseClosingReview warehouses={warehouses} /> : <div style={{ overflowX: "auto", border: "1px solid #e5e7eb", borderRadius: 10, background: "white" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1050, fontSize: 10.5 }}>
           <thead><tr style={{ background: "#f8fafc", color: "#475569" }}>
             {tab === "DISPATCH" ? <th style={{ padding: 9, width: 36 }} /> : null}
@@ -617,7 +652,7 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
           <tbody>
             {filtered.map((o) => (
               <tr key={o._id} style={{ borderTop: "1px solid #f1f5f9" }}>
-                {tab === "DISPATCH" ? <td style={{ padding: 9 }}><input type="checkbox" disabled={!["READY_FOR_DISPATCH", "INVOICED", "INVOICED_PARTIAL"].includes(upper(o.workflowStatus))} checked={selected.has(String(o._id))} onChange={() => toggleSelected(String(o._id))} /></td> : null}
+                {tab === "DISPATCH" ? <td style={{ padding: 9 }}><input type="checkbox" disabled checked={selected.has(String(o._id))} onChange={() => toggleSelected(String(o._id))} /></td> : null}
                 <td style={{ padding: 9 }}><button type="button" onClick={() => openDetail(o)} style={{ border: 0, background: "transparent", color: "#1d4ed8", fontWeight: 900, cursor: "pointer", padding: 0 }}>{o.orderNo}</button><div style={{ color: "#94a3b8", marginTop: 2 }}>{o.orderChannel || "DMS"}</div></td>
                 <td style={{ padding: 9 }}>{dateTime(o.date || o.createdAt)}</td>
                 <td style={{ padding: 9 }}><b>{o.customerNameSnapshot || "—"}</b></td>
@@ -628,7 +663,7 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
                 <td style={{ padding: 9 }}>{actionsFor(o)}</td>
                 <td style={{ padding: 9, textAlign: "right" }}><span style={{ display: "inline-flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" }}>
                   <ActionButton tone="soft" onClick={() => openDetail(o)}>Timeline</ActionButton>
-                  {!['DELIVERED','CLOSED','CANCELLED','REJECTED'].includes(upper(o.workflowStatus)) ? <ActionButton tone="warn" onClick={() => cancelOrder(o)}>Cancel</ActionButton> : null}
+                  {!['DELIVERED','HANDED_TO_TRANSPORTER','CLOSED','CANCELLED','REJECTED','CANCELLATION_IN_PROCESS'].includes(upper(o.workflowStatus)) ? <ActionButton tone="warn" onClick={() => cancelOrder(o)}>Cancel</ActionButton> : null}
                   {!['DELIVERED','CLOSED'].includes(upper(o.workflowStatus)) && !invoiceIdFor(o) ? <ActionButton icon={Trash2} tone="warn" onClick={() => deleteOrder(o)}>Delete</ActionButton> : null}
                 </span></td>
               </tr>
@@ -636,7 +671,7 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
             {!filtered.length ? <tr><td colSpan={10} style={{ padding: 30, textAlign: "center", color: "#94a3b8" }}>{loading ? "Loading…" : "No orders in this queue"}</td></tr> : null}
           </tbody>
         </table>
-      </div>
+      </div>}
 
       <div style={{ marginTop: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}><b style={{ fontSize: 12 }}>Delivery Runs</b><span style={{ fontSize: 10, color: "#6b7280" }}>{runs.length} recent run(s)</span></div>
@@ -672,7 +707,7 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
         <div style={{ marginTop: 14, overflowX: "auto", border: "1px solid #e5e7eb", borderRadius: 9 }}>
           <table style={{ width: "100%", minWidth: 880, borderCollapse: "collapse", fontSize: 10 }}>
             <thead><tr style={{ background: "#f8fafc", color: "#475569" }}>
-              <th style={{ padding: 8, textAlign: "left", width: 34 }}>#</th><th style={{ padding: 8, textAlign: "left", minWidth: 260 }}>Product</th><th style={{ padding: 8, textAlign: "right" }}>Qty</th><th style={{ padding: 8, textAlign: "left" }}>Unit</th><th style={{ padding: 8, textAlign: "right" }}>Basic Rate</th><th style={{ padding: 8, textAlign: "right" }}>Disc %</th><th style={{ padding: 8, textAlign: "right" }}>GST %</th><th style={{ padding: 8, textAlign: "right" }}>Line Total</th><th style={{ padding: 8, width: 42 }} />
+              <th style={{ padding: 8, textAlign: "left", width: 34 }}>#</th><th style={{ padding: 8, textAlign: "left", minWidth: 260 }}>Product</th><th style={{ padding: 8, textAlign: "right" }}>Qty</th><th style={{ padding: 8, textAlign: "left" }}>Unit</th><th style={{ padding: 8, textAlign: "right" }}>Basic Rate before Grade</th><th style={{ padding: 8, textAlign: "right" }}>Grade Discount %</th><th style={{ padding: 8, textAlign: "right" }}>Disc % (extra)</th><th style={{ padding: 8, textAlign: "right" }}>GST %</th><th style={{ padding: 8, textAlign: "right" }}>Line Total</th><th style={{ padding: 8, width: 42 }} />
             </tr></thead>
             <tbody>
               {createOrder.items.map((row, index) => {
@@ -683,6 +718,7 @@ export default function OrderControlCenter({ initialTab = "ORDERS" }) {
                   <td style={{ padding: 8 }}><input type="number" min="0.001" step="any" value={row.qty} onChange={(e) => setCreateOrderItem(index, { qty: e.target.value })} style={{ width: 85, padding: 7, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6 }} /></td>
                   <td style={{ padding: 8 }}>{row.unit || "PCS"}</td>
                   <td style={{ padding: 8 }}><input type="number" min="0" step="any" value={row.rate} onChange={(e) => setCreateOrderItem(index, { rate: e.target.value })} style={{ width: 100, padding: 7, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6 }} /></td>
+                  <td style={{ padding: 8, textAlign: "right" }}><input readOnly value={row.gradeDiscountPct || 0} title="Taken from the selected customer's grade" style={{ width: 74, padding: 7, textAlign: "right", background: "#f1f5f9", border: "1px solid #d1d5db", borderRadius: 6 }} /></td>
                   <td style={{ padding: 8 }}><input type="number" min="0" max="100" step="any" value={row.discountPct} onChange={(e) => setCreateOrderItem(index, { discountPct: e.target.value })} style={{ width: 74, padding: 7, textAlign: "right", border: "1px solid #d1d5db", borderRadius: 6 }} /></td>
                   <td style={{ padding: 8, textAlign: "right" }}>{Number(row.gstRate || 0).toFixed(2)}</td>
                   <td style={{ padding: 8, textAlign: "right", fontWeight: 900 }}>{money(line.total)}</td>

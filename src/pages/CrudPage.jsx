@@ -207,7 +207,7 @@ export default function CrudPage({ page }) {
     setEdit(r);
     const values = { ...blank };
     fields.forEach((x) => {
-      values[x.key] = r[x.key] ?? r.data?.[x.key] ?? "";
+      values[x.key] = x.key === "loginPassword" ? "" : (r[x.key] ?? r.data?.[x.key] ?? "");
     });
     setForm(values);
     setShow(true);
@@ -290,9 +290,9 @@ export default function CrudPage({ page }) {
           <button title="Edit" onClick={() => openEdit(r)}>
             <Pencil />
           </button>
-          <button className="danger" title="Delete" onClick={() => remove(r)}>
+          {!(page.app === "dms" && resourceName(page) === "warehouses" && r.isMainWarehouse) && <button className="danger" title="Delete" onClick={() => remove(r)}>
             <Trash2 />
-          </button>
+          </button>}
         </div>
       ),
     },
@@ -367,14 +367,16 @@ export default function CrudPage({ page }) {
             </button>
           </div>
           <div className="formGrid dynamicForm">
-            {fields.map((field) => (
-              <Field
-                key={field.key}
-                field={field}
-                value={form[field.key]}
-                onChange={(v) => setForm((x) => ({ ...x, [field.key]: v }))}
-              />
-            ))}
+            {fields.map((field) => {
+              const isWarehouseMain = page.app === "dms" && resourceName(page) === "warehouses" && field.key === "isMainWarehouse";
+              const chosenMain = isWarehouseMain && rows.find((w) => w.isMainWarehouse === true || w.isMainWarehouse === "true");
+              const lockedMain = Boolean(chosenMain);
+              return (
+                <Field key={field.key} field={field} value={form[field.key]}
+                  disabled={isWarehouseMain && lockedMain}
+                  onChange={(v) => setForm((x) => ({ ...x, [field.key]: v }))}/>
+              );
+            })}
           </div>
           <div className="formActions">
             <button className="btn ghost" onClick={() => setShow(false)}>
@@ -472,11 +474,16 @@ export default function CrudPage({ page }) {
   );
 }
 
-function Field({ field, value, onChange }) {
+function Field({ field, value, onChange, disabled = false }) {
   const props = {
     value: value ?? "",
     onChange: (e) => onChange(e.target.value),
   };
+  if (field.type === "checkbox") return (
+    <label style={{display:"flex",alignItems:"center",gap:8}}>
+      <input type="checkbox" disabled={disabled} checked={value === true || value === "true" || value === "YES"} onChange={(e)=>onChange(e.target.checked)} />{field.label}{disabled ? " (Permanent; cannot be changed)" : ""}
+    </label>
+  );
   if (field.type === "select")
     return (
       <label>
@@ -500,7 +507,7 @@ function Field({ field, value, onChange }) {
   return (
     <label>
       {field.label}
-      <input type={field.type || "text"} {...props} />
+      <input type={field.type || "text"} {...props} disabled={disabled} />
     </label>
   );
 }

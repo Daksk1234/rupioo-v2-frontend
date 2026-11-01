@@ -38,7 +38,8 @@ export default function LiveReportPage({page}){
     try{
       const partyQuery=isLedger&&partyId?`&partyGlobalId=${encodeURIComponent(partyId)}`:"";
       const {startDate,endDate}=monthBounds(fy,selectedMonth);
-      setData(await api(`/reports/run?name=${encodeURIComponent(page.label)}&financialYear=${encodeURIComponent(fy)}&startDate=${startDate}&endDate=${endDate}${partyQuery}`))
+      const effectiveName={"/dms/pnl":"Profit & Loss","/dms/cma":"CMA Operating Statement","/dms/proposed-balance-sheet":"Provisional Balance Sheet"}[page.path]||page.label;
+      setData(await api(`/reports/run?name=${encodeURIComponent(effectiveName)}&financialYear=${encodeURIComponent(fy)}&startDate=${startDate}&endDate=${endDate}${partyQuery}`))
     }
     catch(e){setMsg(e.message)}
     finally{setLoading(false)}

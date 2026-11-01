@@ -1,0 +1,47 @@
+.transactionSingleToolbar{display:flex;gap:7px;align-items:center;flex-wrap:nowrap;overflow-x:auto;max-width:100%;padding:10px 0;scrollbar-width:thin}
+.transactionSingleToolbar>*{flex-shrink:0}
+.transactionSingleToolbar select,.transactionSingleToolbar input{height:36px;border:1px solid var(--border,#d1d5db);border-radius:7px;padding:0 9px;background:var(--surface,#fff);color:inherit}
+.transactionSingleToolbar .searchBox{flex:1 0 150px;min-width:150px;max-width:320px}
+.transactionSingleToolbar .searchBox input{width:100%;min-width:0}
+.transactionLedgerPanel{padding-top:0}
+.cashbookBalanceStrip{display:flex;gap:22px;flex-wrap:wrap;margin:4px 0 12px;padding:10px 0;border-block:1px solid var(--border,#e2e8f0);font-size:12px}
+.cashbookBalanceStrip span{display:flex;gap:9px}.cashbookBalanceStrip strong{font-variant-numeric:tabular-nums}
+.transactionEntryModal{width:min(780px,96vw);max-height:90vh;overflow:auto}
+.transactionDialogTabs{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.transactionDialogTabs>.iconBtn{margin-left:auto}
+.transactionDialogMode{font-weight:700;font-size:12px;opacity:.65;margin-left:10px}
+.transactionEntryModal .formGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.transactionEntryModal .wideField,.transactionEntryModal .formActions{grid-column:1/-1}
+.transactionEntryModal label,.transactionBulkForm label{display:flex;flex-direction:column;gap:6px;font-size:12px;font-weight:650}
+.transactionEntryModal input,.transactionEntryModal select{min-height:36px;max-width:100%;padding:8px;border:1px solid var(--border,#d1d5db);border-radius:6px;background:var(--surface,#fff);color:inherit}
+.transactionBulkForm{display:flex;flex-direction:column;gap:14px}
+.transactionBulkHint{font-size:12px;line-height:1.6}
+.transactionBulkButtons{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+@media(max-width:600px){.transactionEntryModal .formGrid{grid-template-columns:1fr}.transactionSingleToolbar{overflow-x:auto}}
+/* Bank and Cash statement tables: headings and cells align at each column center. */
+.transactionCenteredTable .smartDataTable th,
+.transactionCenteredTable .smartDataTable td{text-align:center;vertical-align:middle}
+.transactionCenteredTable .smartDataTable td.numericCell{text-align:center}
+.transactionCenteredTable .smartDataTable td .financeRemarkCell{display:inline-block;text-align:center}
+.transactionCenteredTable .smartDataTable th.checkCol,
+.transactionCenteredTable .smartDataTable td.checkCol{text-align:center}
+.transactionEntryFullPage,.transactionStatementFullPage{width:100%;max-width:100%;margin:0 auto}
+.transactionEntryFullPage>.transactionSingleToolbar{margin-bottom:9px}
+.transactionLineTableScroll{width:100%;overflow-x:auto}
+.transactionLineTable{border-collapse:collapse;min-width:960px;width:100%;table-layout:fixed}
+.transactionLineTable th,.transactionLineTable td{padding:7px 5px;border-bottom:1px solid var(--border,#e2e8f0);text-align:center}
+.transactionLineTable th{font-size:11px;font-weight:700;white-space:nowrap}
+.transactionLineTable input,.transactionLineTable select{width:100%;min-width:0;max-width:100%;height:37px;border:1px solid var(--border,#cbd5e1);border-radius:7px;background:var(--surface,#fff);color:inherit;padding:0 7px;font-size:12px}
+.transactionLineTable th:nth-child(1){width:13%}.transactionLineTable th:nth-child(2){width:26%}.transactionLineTable th:nth-child(3){width:15%}
+.transactionLineTable th:nth-last-child(3){width:13%}.transactionLineTable th:nth-last-child(2){width:21%}.transactionLineTable th:last-child{width:45px}
+.transactionLineActions{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:13px;flex-wrap:wrap}
+.transactionStatementFullPage .financeReviewModal{width:100%;max-width:100%;max-height:none;overflow:visible}
+.transactionSingleToolbar select[aria-label^="Download"]{min-width:145px;font-weight:650}
+
+/* Keep bulk deletion a single, compact, accessible icon in the toolbar. */
+.transactionSingleToolbar .transactionBulkDeleteIcon{width:34px;min-width:34px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;flex:0 0 34px}
+/* Wider Remarks column in both bank and cash lists, including long narrations. */
+.transactionCenteredTable .smartDataTable th:nth-child(4),
+.transactionCenteredTable .smartDataTable td:nth-child(4){min-width:480px}
+.transactionCenteredTable .smartDataTable td .financeRemarkCell{max-width:500px;width:100%;white-space:normal;overflow-wrap:anywhere;text-overflow:clip;line-height:1.45}
+@media(max-width:650px){.transactionCenteredTable .smartDataTable th:nth-child(4),.transactionCenteredTable .smartDataTable td:nth-child(4){min-width:330px}}

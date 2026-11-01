@@ -7,6 +7,8 @@ import RegisterSuperadminPage from "./pages/RegisterSuperadminPage.jsx";
 import VendorPortalPage from "./pages/VendorPortalPage.jsx";
 import AppShell from "./components/AppShell.jsx";
 import ModulePage from "./pages/ModulePage.jsx";
+import TransactionEntryPage from "./pages/TransactionEntryDialog.jsx";
+import BankTransactionPage from "./pages/BankTransactionPage.jsx";
 import NoAccessPage from "./pages/NoAccessPage.jsx";
 import SuperadminProfilePage from "./pages/SuperadminProfilePage.jsx";
 import StorageSettings from "./pages/StorageSettings.jsx";
@@ -19,6 +21,8 @@ const SALES_INVOICE_PATH = "/dms/sales-invoices";
 
 function canViewPage(user, path) {
   if (user?.pageAccess?.[path]?.view === true) return true;
+  if (path === "/dms/cashbook") return ["/dms/cashier", "/dms/receipts", "/dms/payments"].some(p => user?.pageAccess?.[p]?.view === true);
+  if (path === "/dms/proposed-balance-sheet") return user?.pageAccess?.["/dms/balance-sheet"]?.view === true;
   if (path === SALES_WITH_PRODUCT_PATH) {
     return user?.pageAccess?.[SALES_INVOICE_PATH]?.view === true;
   }
@@ -50,7 +54,7 @@ function Protected({ page }) {
   // Every other operational route is protected by the View permission inherited
   // from the Group attached to the selected Plan. Direct URL entry is blocked.
   if (user?.role !== "MASTER" && !canViewPage(user, page.path)) {
-    return <Navigate to={homePath()} replace />;
+    return <Navigate to="/no-access" replace />;
   }
 
   return (
@@ -58,6 +62,22 @@ function Protected({ page }) {
       <ModulePage page={page} />
     </AppShell>
   );
+}
+
+function TransactionSubpageProtected({channel,mode}) {
+  if(!token())return <Navigate to="/login" replace/>;
+  const user=getUser(),parent=channel==="bank"?"/dms/banking":"/dms/cashbook";
+  if(user?.role==="MASTER")return <Navigate to="/master/dashboard" replace/>;
+  const rights=user?.pageAccess?.[parent];
+  if(!canViewPage(user,parent)||rights?.create===false)return <Navigate to="/no-access" replace/>;
+  return <AppShell appKey="dms"><TransactionEntryPage channel={channel} initialTab={mode}/></AppShell>;
+}
+function BankStatementUploadProtected(){
+  if(!token())return <Navigate to="/login" replace/>;
+  const user=getUser();
+  if(user?.role==="MASTER")return <Navigate to="/master/dashboard" replace/>;
+  if(!canViewPage(user,"/dms/banking")||user?.pageAccess?.["/dms/banking"]?.create===false)return <Navigate to="/no-access" replace/>;
+  return <AppShell appKey="dms"><BankTransactionPage statementPage/></AppShell>;
 }
 
 function SuperadminProfileProtected() {
@@ -110,6 +130,11 @@ export default function App() {
         path="/"
         element={<Navigate to={token() ? homePath() : "/login"} replace />}
       />
+
+      <Route path="/dms/banking/add" element={<TransactionSubpageProtected channel="bank" mode="single"/>}/>
+      <Route path="/dms/cashbook/add" element={<TransactionSubpageProtected channel="cash" mode="single"/>}/>
+      <Route path="/dms/cashbook/bulk" element={<TransactionSubpageProtected channel="cash" mode="bulk"/>}/>
+      <Route path="/dms/banking/statement-upload" element={<BankStatementUploadProtected/>}/>
 
       {allPages.map((page) => (
         <Route

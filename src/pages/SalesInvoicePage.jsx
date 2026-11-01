@@ -217,6 +217,11 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   const sourceOrderId = embedded ? "" : (searchParams.get("orderId") || "");
   const deliverId = embedded ? "" : (searchParams.get("deliverId") || "");
   const createMode = embedded ? true : (searchParams.get("create") === "1" || Boolean(editId) || Boolean(sourceOrderId));
+  const routeInvoiceType = sourceOrderId
+    ? "INVOICE"
+    : String(searchParams.get("invoiceType") || "INVOICE").toUpperCase() === "PERFORMA"
+      ? "PERFORMA"
+      : "INVOICE";
   const requestedFinancialYear = searchParams.get("financialYear") || configuredFinancialYear(sessionUser);
   // New Sales Invoices always start from today's date/current FY. Editing (and
   // order-draft lookup) keeps the FY supplied in the URL so historical records
@@ -265,7 +270,9 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   const [orderDraft, setOrderDraft] = useState(null);
 
   const [search, setSearch] = useState("");
+  const [activeDocumentType, setActiveDocumentType] = useState(routeInvoiceType);
   const [activeBucket, setActiveBucket] = useState("REGULAR");
+  const [convertingId, setConvertingId] = useState("");
   const [periodType, setPeriodType] = useState("MONTHLY");
   const [selectedMonth, setSelectedMonth] = useState(fyMonthOrder[new Date().getMonth() >= 3 ? new Date().getMonth() - 3 : new Date().getMonth() + 9] || "April");
   const [selectedQuarter, setSelectedQuarter] = useState("Q1");
@@ -290,6 +297,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   }, []);
 
   const [header, setHeader] = useState({
+    invoiceType: routeInvoiceType,
     invoiceNo: "",
     date: editId ? initialDateForFinancialYear(fy) : localToday(),
     orderNo: "",
@@ -323,7 +331,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     };
   };
 
-  const resetCreate = ({ resetToTodayFinancialYear = false } = {}) => {
+  const resetCreate = ({ resetToTodayFinancialYear = false, invoiceType = activeDocumentType } = {}) => {
     setCustomerId("");
     setRows([newRow()]);
     setAdjustments([]);
@@ -340,7 +348,9 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       const todayFy = financialYearFromDate(today) || currentFinancialYear();
       if (todayFy !== fy) setFy(todayFy);
     }
+    const nextInvoiceType = sourceOrderId ? "INVOICE" : (invoiceType === "PERFORMA" ? "PERFORMA" : "INVOICE");
     setHeader({
+      invoiceType: nextInvoiceType,
       invoiceNo: "",
       date: today,
       orderNo: "",
@@ -357,7 +367,10 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   const hydrateEdit = (invoice, productList) => {
     setCustomerId(invoice.customerGlobalId || "");
     setSelectedTransporterId(invoice.transportAssignment?.transporterId || "");
+    const invoiceType = String(invoice.invoiceType || "INVOICE").toUpperCase() === "PERFORMA" ? "PERFORMA" : "INVOICE";
+    setActiveDocumentType(invoiceType);
     setHeader({
+      invoiceType,
       invoiceNo: invoice.invoiceNo || "",
       date: invoice.date ? ymd(invoice.date) : initialDateForFinancialYear(fy),
       orderNo: invoice.orderNo || "",
@@ -387,7 +400,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         productName: p?.name || item.nameSnapshot || item.productNameSnapshot || "",
         hsnCode: p?.hsnCode || item.hsnSnapshot || item.hsnCodeSnapshot || "",
         qty: Number(item.qty || 0),
-        availableQty: Number(p?.currentStock || 0) + Number(item.qty || 0),
+        availableQty: Number(p?.currentStock || 0) + (invoiceType === "INVOICE" ? Number(item.qty || 0) : 0),
         basicUnit: p?.basicUnit || item.unit || "PCS",
         packingUnit: p?.packingUnitName || p?.packingUnit || item.packingUnit || "",
         qtyInBag: Number(p?.qtyInBag || item.qtyInBag || 1),
@@ -410,10 +423,15 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
   const hydrateOrderDraft = (draft, productList) => {
     setOrderDraft(draft);
+    // An order has already saved its grade/item pricing. Do not carry over
+    // invoice-level discounts from a previously opened invoice.
+    setAdjustments([]);
+    setBasicTotalEdit(null);
     setCustomerId(draft.customerGlobalId || "");
     setHeader((old) => ({
       ...old,
       orderNo: draft.orderNo || "",
+      warehouseId: draft.warehouseId || "",
       noOfPackages: Number(draft.packageCount || 0),
       remarks: old.remarks || `Generated from sales order ${draft.orderNo || ""}`,
     }));
@@ -427,11 +445,14 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         productName: p?.name || item.nameSnapshot || "",
         hsnCode: p?.hsnCode || item.hsnCode || item.hsnSnapshot || "",
         qty: Number(item.qty || 0),
-        availableQty: Number(p?.currentStock ?? p?.openingStock ?? item.qty ?? 0),
+        // This exact quantity is already packed/reserved for this order.
+        availableQty: Number(item.qty || 0),
         basicUnit: p?.basicUnit || item.unit || "PCS",
         packingUnit: p?.packingUnitName || p?.packingUnit || item.packingUnit || "",
         qtyInBag: Number(p?.qtyInBag || item.qtyInBag || 1),
         mrp: Number(p?.mrp || 0),
+        // Grade % is a separate snapshot; basicRate is already after grade.
+        // Only a separately-entered item discount belongs in Disc %.
         gradeDiscountPct: Number(item.gradeDiscountPct || 0),
         saleRate: saleFromBasicGST(basicRate, gstRate),
         basicRate,
@@ -451,7 +472,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         : [fy];
       const invoicePromise = Promise.all(
         invoiceYears.map((year) =>
-          fetchAllPaged(`/transactions/sales-invoices?financialYear=${encodeURIComponent(year)}${!createMode && !deliverId && listFy !== "ALL" && periodType === "MONTHLY" ? `&fromDate=${monthBounds(listFy, selectedMonth).startDate}&toDate=${monthBounds(listFy, selectedMonth).endDate}` : ""}`, 100)
+          fetchAllPaged(`/transactions/sales-invoices?financialYear=${encodeURIComponent(year)}&invoiceType=${encodeURIComponent(!createMode ? activeDocumentType : (header.invoiceType || routeInvoiceType))}${!createMode && !deliverId && listFy !== "ALL" && periodType === "MONTHLY" ? `&fromDate=${monthBounds(listFy, selectedMonth).startDate}&toDate=${monthBounds(listFy, selectedMonth).endDate}` : ""}`, 100)
             .catch(() => []),
         ),
       ).then((groups) => groups.flat());
@@ -498,7 +519,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       }
 
       if (editId) {
-        const invoice = await api(`/transactions/sales-invoices/${editId}?financialYear=${encodeURIComponent(fy)}`);
+        const invoice = await api(`/transactions/sales-invoices/${editId}?financialYear=${encodeURIComponent(fy)}&invoiceType=${encodeURIComponent(routeInvoiceType)}`);
         hydrateEdit(invoice, productList);
         setNextInvoiceNo(invoice.invoiceNo || "");
         invoiceNoManuallyEditedRef.current = false;
@@ -518,16 +539,18 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fy, listFy, editId, createMode, sourceOrderId, periodType, selectedMonth]);
+  }, [fy, listFy, editId, createMode, sourceOrderId, periodType, selectedMonth, activeDocumentType, routeInvoiceType]);
 
   useEffect(() => {
     let active = true;
     if (!createMode || editId) return () => { active = false; };
-    const customerQuery = customerId ? `&customerGlobalId=${encodeURIComponent(customerId)}` : "";
+    const isPerforma = String(header.invoiceType || "INVOICE").toUpperCase() === "PERFORMA";
+    const customerQuery = !isPerforma && customerId ? `&customerGlobalId=${encodeURIComponent(customerId)}` : "";
+    const invoiceTypeQuery = `&invoiceType=${encodeURIComponent(isPerforma ? "PERFORMA" : "INVOICE")}`;
     const invoiceNumberFy = financialYearFromDate(header.date) || fy;
     // Never show the previous party/FY series while the new series is loading.
     setInvoiceNumberSeries(null);
-    api(`/transactions/sales-invoices/next-number?financialYear=${encodeURIComponent(invoiceNumberFy)}${customerQuery}`)
+    api(`/transactions/sales-invoices/next-number?financialYear=${encodeURIComponent(invoiceNumberFy)}${invoiceTypeQuery}${customerQuery}`)
       .then((result) => {
         if (!active) return;
         // Never let a stale/misrouted response from another FY overwrite the
@@ -538,7 +561,9 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
           prefix: String(result?.prefix || "").trim(),
           suffix: String(result?.suffix || "").trim(),
           cashInvoice: Boolean(result?.cashInvoice),
-          customerGlobalId: customerId,
+          performaInvoice: Boolean(result?.performaInvoice),
+          invoiceType: isPerforma ? "PERFORMA" : "INVOICE",
+          customerGlobalId: isPerforma ? "" : customerId,
           financialYear: invoiceNumberFy,
         });
         setNextInvoiceNo(autoInvoiceNo);
@@ -557,16 +582,21 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
         setSeriesMsg(error.message || "Could not generate invoice number");
       });
     return () => { active = false; };
-  }, [customerId, fy, header.date, createMode, editId]);
+  }, [customerId, fy, header.date, header.invoiceType, createMode, editId]);
 
   // The editable input remains numeric, but its fixed prefix/C/suffix and
   // complete printed invoice number are visible before the user posts it.
+  const currentInvoiceType = String(header.invoiceType || "INVOICE").toUpperCase() === "PERFORMA" ? "PERFORMA" : "INVOICE";
   const activeInvoiceSeries = !editId &&
-    invoiceNumberSeries?.customerGlobalId === customerId &&
+    invoiceNumberSeries?.invoiceType === currentInvoiceType &&
+    (currentInvoiceType === "PERFORMA" || invoiceNumberSeries?.customerGlobalId === customerId) &&
     invoiceNumberSeries?.financialYear === (financialYearFromDate(header.date) || fy)
       ? invoiceNumberSeries : null;
   const invoicePrefix = activeInvoiceSeries?.prefix
-    ? `${activeInvoiceSeries.prefix}${activeInvoiceSeries.cashInvoice ? "C" : "-"}` : "";
+    ? (currentInvoiceType === "PERFORMA"
+      ? activeInvoiceSeries.prefix
+      : `${activeInvoiceSeries.prefix}${activeInvoiceSeries.cashInvoice ? "C" : "-"}`)
+    : "";
   const invoiceSuffix = activeInvoiceSeries?.suffix
     ? `${activeInvoiceSeries.cashInvoice ? "" : "-"}${activeInvoiceSeries.suffix}` : "";
   const fullInvoiceNumberPreview = activeInvoiceSeries && /^\d+$/.test(String(header.invoiceNo || ""))
@@ -616,6 +646,24 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       }
     }
   };
+  const changeInvoiceType = (value) => {
+    if (editId || sourceOrderId) return;
+    const invoiceType = value === "PERFORMA" ? "PERFORMA" : "INVOICE";
+    setActiveDocumentType(invoiceType);
+    invoiceNoManuallyEditedRef.current = false;
+    setNextInvoiceNo("");
+    setInvoiceNumberSeries(null);
+    setSeriesMsg("");
+    setHeader((h) => ({
+      ...h,
+      invoiceType,
+      invoiceNo: "",
+      eInvoice: invoiceType === "PERFORMA"
+        ? { status: "NOT_GENERATED", irn: "", ackNo: "", ackDate: "", signedQrPayload: "" }
+        : (h.eInvoice || { status: "NOT_GENERATED", irn: "", ackNo: "", ackDate: "", signedQrPayload: "" }),
+    }));
+  };
+
   const setEInvoice = (k, v) => setHeader((h) => ({
     ...h,
     eInvoice: { ...(h.eInvoice || {}), [k]: v },
@@ -798,7 +846,9 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   };
 
   useEffect(() => {
-    if (!customerId || !createMode || editId) return;
+    // Order-linked invoices preserve the original saved price and grade %.
+    // Never re-price an existing order with a later Customer Grade change.
+    if (!customerId || !createMode || editId || sourceOrderId) return;
     const gradePct = Number(customer?.gradeDiscountPct || 0);
     setRows((rs) => rs.map((r) => {
       if (!r.productId) return { ...r, gradeDiscountPct: gradePct };
@@ -815,7 +865,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     // Re-price only while creating a new invoice. Existing invoices keep their
     // historical saved rate when opened for edit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customerId, customer?.gradeDiscountPct, createMode, editId, products]);
+  }, [customerId, customer?.gradeDiscountPct, createMode, editId, sourceOrderId, products]);
 
   const adjustmentCalc = useMemo(() => {
     const base = round2(rows.reduce((s, r) => s + Number(r.taxable || 0), 0));
@@ -854,7 +904,10 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       const beforeBillRate = Number(row.qty || 0) ? Number(row.taxable || 0) / Number(row.qty || 1) : 0;
       const billingRate = round2(beforeBillRate * factor);
       if (purchaseRate > 0 && billingRate + 0.005 < purchaseRate) {
-        return { index, message: `Billing ₹${billingRate.toFixed(2)} below purchase ₹${purchaseRate.toFixed(2)}` };
+        const itemDiscount = Number(row.discountPct || 0);
+        const billDiscount = round2((1 - factor) * 100);
+        const summary = `Grade ${Number(row.gradeDiscountPct || 0)}% already reflected in Basic ₹${Number(row.basicRate || 0).toFixed(2)}; additional item discount ${itemDiscount}%${billDiscount > 0 ? `; bill discount ${billDiscount}%` : ""}. Billing ₹${billingRate.toFixed(2)} below purchase ₹${purchaseRate.toFixed(2)}`;
+        return { index, message: summary };
       }
       return null;
     }).filter(Boolean);
@@ -881,21 +934,25 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
   const saveInvoice = async ({ stayOnCreate = embedded } = {}) => {
     setMsg("");
-    if (!String(header.invoiceNo || "").trim()) { setMsg("Invoice Number is required"); return false; }
-    if (!editId && !/^\d+$/.test(String(header.invoiceNo || "").trim())) { setMsg("Invoice Number must contain numbers only"); return false; }
+    const documentType = String(header.invoiceType || "INVOICE").toUpperCase() === "PERFORMA" ? "PERFORMA" : "INVOICE";
+    const isPerformaDocument = documentType === "PERFORMA";
+    if (!String(header.invoiceNo || "").trim()) { setMsg(`${isPerformaDocument ? "Performa" : "Invoice"} Number is required`); return false; }
+    if (!editId && !/^\d+$/.test(String(header.invoiceNo || "").trim())) { setMsg(`${isPerformaDocument ? "Performa" : "Invoice"} Number must contain numbers only`); return false; }
     if (!customerId) { setMsg("Select a buyer / party"); return false; }
     if (!editId && !activeInvoiceSeries) {
-      setMsg("Select the buyer and let the correct registered/C invoice series load before posting.");
+      setMsg(isPerformaDocument
+        ? "Let the fixed Performa Invoice series load before saving."
+        : "Select the buyer and let the correct registered/C invoice series load before posting.");
       return false;
     }
-    if (!header.warehouseId) { setMsg("Warehouse is mandatory"); return false; }
+    if (!sourceOrderId && !header.warehouseId) { setMsg("Warehouse is mandatory"); return false; }
     if (rows.some((r) => !r.productId || Number(r.qty || 0) <= 0)) { setMsg("Complete every product row"); return false; }
     if (rows.some((r) => r.qtyError)) { setMsg("One or more product rows have insufficient stock"); return false; }
     if (billingErrors.length) { setMsg(`${billingErrors[0].message}. Invoice cannot be posted below purchase price.`); return false; }
-    if (totals.grand > 49999 && !String(header.arn || "").trim()) { setMsg("ARN / reference is required above ₹49,999"); return false; }
+    if (!isPerformaDocument && totals.grand > 49999 && !String(header.arn || "").trim()) { setMsg("ARN / reference is required above ₹49,999"); return false; }
     if (!isCashCustomer && transporterOptions.length > 1 && !selectedTransporterId) { setMsg("Select a transporter for this customer"); return false; }
     if (!isCashCustomer && transportRequiredForCustomer && !transporterLoading && transporterOptions.length === 0) { setMsg(`No transporter serves ${customerDeliveryAddress?.pincode || customerDeliveryCity || "this customer"}. Update the Transporter service area first.`); return false; }
-    if (String(header.eInvoice?.status || "").toUpperCase() === "GENERATED") {
+    if (!isPerformaDocument && String(header.eInvoice?.status || "").toUpperCase() === "GENERATED") {
       if (!String(header.eInvoice?.irn || "").trim()) { setMsg("GST e-Invoice IRN is required when status is GENERATED"); return false; }
       if (!String(header.eInvoice?.ackNo || "").trim()) { setMsg("GST e-Invoice Ack No. is required when status is GENERATED"); return false; }
       if (!String(header.eInvoice?.ackDate || "").trim()) { setMsg("GST e-Invoice Ack Date is required when status is GENERATED"); return false; }
@@ -905,15 +962,17 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       const postingFy = financialYearFromDate(header.date) || fy;
       const payload = {
         ...header,
+        warehouseId: sourceOrderId ? (orderDraft?.warehouseId || orderDraft?.mainWarehouseId || "") : header.warehouseId,
+        invoiceType: documentType,
         invoiceNo: String(header.invoiceNo || "").trim(),
         manualInvoiceNo: !editId && invoiceNoManuallyEditedRef.current,
         financialYear: postingFy,
         sourceFinancialYear: fy,
-        sourceOrderId: sourceOrderId || "",
-        billingMode: sourceOrderId ? "ORDER" : "DIRECT",
+        sourceOrderId: isPerformaDocument ? "" : (sourceOrderId || ""),
+        billingMode: sourceOrderId && !isPerformaDocument ? "ORDER" : "DIRECT",
         // The order lifecycle has already performed credit-control verification.
         // Direct invoices continue through the normal invoice credit checks.
-        creditOverrideApproved: Boolean(sourceOrderId),
+        creditOverrideApproved: Boolean(sourceOrderId && !isPerformaDocument),
         customerGlobalId: customerId,
         transporterId: selectedTransporterId || "",
         billDiscount: totals.discountTotal,
@@ -929,14 +988,20 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
           gstRate: Number(r.gstRate),
         })),
       };
-      const inv = await api(editId ? `/transactions/sales-invoices/${editId}` : "/transactions/sales-invoices", {
-        method: editId ? "PUT" : "POST",
-        body: JSON.stringify(payload),
-      });
-      setMsg(`Sales Invoice ${inv.invoiceNo} ${editId ? "updated" : "posted"}`);
-      resetCreate({ resetToTodayFinancialYear: Boolean(stayOnCreate) });
+      const inv = await api(
+        editId
+          ? `/transactions/sales-invoices/${editId}?financialYear=${encodeURIComponent(fy)}&invoiceType=${encodeURIComponent(documentType)}`
+          : "/transactions/sales-invoices",
+        {
+          method: editId ? "PUT" : "POST",
+          body: JSON.stringify(payload),
+        },
+      );
+      setActiveDocumentType(documentType);
+      setMsg(`${isPerformaDocument ? "Performa Invoice" : "Sales Invoice"} ${inv.invoiceNo} ${editId ? "updated" : (isPerformaDocument ? "created" : "posted")}`);
+      resetCreate({ resetToTodayFinancialYear: Boolean(stayOnCreate), invoiceType: documentType });
       await load();
-      if (!stayOnCreate) setSearchParams({ financialYear: postingFy });
+      if (!stayOnCreate) setSearchParams({ financialYear: postingFy, invoiceType: documentType });
       return true;
     } catch (e) {
       setMsg(e.message);
@@ -978,14 +1043,20 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
   const deleteInvoice = async () => {
     if (!editId) return;
-    if (!window.confirm(`Permanently delete Sales Invoice ${header.invoiceNo}? The invoice document will be removed from the database. Stock will be restored and accounting will be reversed. This cannot be undone.`)) return;
+    const documentType = String(header.invoiceType || "INVOICE").toUpperCase() === "PERFORMA" ? "PERFORMA" : "INVOICE";
+    const isPerformaDocument = documentType === "PERFORMA";
+    const warning = isPerformaDocument
+      ? `Permanently delete Performa Invoice ${header.invoiceNo}? This removes the Performa document from the database and cannot be undone.`
+      : `Permanently delete Sales Invoice ${header.invoiceNo}? The invoice document will be removed from the database. Stock will be restored and accounting will be reversed. This cannot be undone.`;
+    if (!window.confirm(warning)) return;
     setLoading(true);
     setMsg("");
     try {
-      await api(`/transactions/sales-invoices/${editId}?financialYear=${encodeURIComponent(fy)}`, { method: "DELETE" });
-      setMsg(`Sales Invoice ${header.invoiceNo} permanently deleted`);
-      setSearchParams({ financialYear: fy });
-      resetCreate();
+      await api(`/transactions/sales-invoices/${editId}?financialYear=${encodeURIComponent(fy)}&invoiceType=${encodeURIComponent(documentType)}`, { method: "DELETE" });
+      setMsg(`${isPerformaDocument ? "Performa Invoice" : "Sales Invoice"} ${header.invoiceNo} permanently deleted`);
+      setActiveDocumentType(documentType);
+      setSearchParams({ financialYear: fy, invoiceType: documentType });
+      resetCreate({ invoiceType: documentType });
       await load();
     } catch (e) {
       setMsg(e.message);
@@ -994,25 +1065,62 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
     }
   };
 
+  const switchListDocumentType = (value) => {
+    const documentType = value === "PERFORMA" ? "PERFORMA" : "INVOICE";
+    setActiveDocumentType(documentType);
+    setActionInvoice(null);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set("invoiceType", documentType);
+    setSearchParams(nextParams);
+  };
+
   const openCreate = () => {
     const todayFy = currentFinancialYear();
-    resetCreate({ resetToTodayFinancialYear: true });
+    const documentType = sourceOrderId ? "INVOICE" : activeDocumentType;
+    resetCreate({ resetToTodayFinancialYear: true, invoiceType: documentType });
     setFy(todayFy);
-    setSearchParams({ create: "1", financialYear: todayFy });
+    setSearchParams({ create: "1", financialYear: todayFy, invoiceType: documentType });
   };
   const openInvoiceEdit = (row) => {
     const nextFy = row.financialYear || fy;
+    const documentType = String(row.invoiceType || activeDocumentType || "INVOICE").toUpperCase() === "PERFORMA" ? "PERFORMA" : "INVOICE";
     setActionInvoice(null);
+    setActiveDocumentType(documentType);
     setFy(nextFy);
-    setSearchParams({ edit: row._id, financialYear: nextFy });
+    setSearchParams({ edit: row._id, financialYear: nextFy, invoiceType: documentType });
   };
   const openInvoiceActions = (row) => {
     setActionInvoice(row);
     setMsg("");
   };
   const backToList = () => {
-    setSearchParams({ financialYear: fy });
-    resetCreate();
+    const documentType = String(header.invoiceType || activeDocumentType || "INVOICE").toUpperCase() === "PERFORMA" ? "PERFORMA" : "INVOICE";
+    setActiveDocumentType(documentType);
+    setSearchParams({ financialYear: fy, invoiceType: documentType });
+    resetCreate({ invoiceType: documentType });
+  };
+
+  const convertPerformaToInvoice = async (row) => {
+    if (!row?._id || String(row.status || row.workflowStatus || "").toUpperCase() === "CONVERTED") return;
+    const today = localToday();
+    if (!window.confirm(`Convert ${row.invoiceNo} to an actual Sales Invoice dated ${today}? The normal invoice number will be allocated now and stock/accounting will be posted.`)) return;
+    setConvertingId(row._id);
+    setMsg("");
+    try {
+      const invoice = await api(`/transactions/sales-invoices/${row._id}/convert-to-invoice`, {
+        method: "POST",
+        body: JSON.stringify({
+          sourceFinancialYear: row.financialYear || listFy,
+          invoiceDate: today,
+        }),
+      });
+      setMsg(`${row.invoiceNo} converted to Sales Invoice ${invoice.invoiceNo}.`);
+      await load();
+    } catch (error) {
+      setMsg(error.message || "Could not convert Performa to Invoice");
+    } finally {
+      setConvertingId("");
+    }
   };
 
   const periodFiltered = useMemo(() => {
@@ -1198,15 +1306,17 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
   const openInvoicePdf = async (invoice, download = false) => {
     if (!invoice?._id) return;
+    const documentType = String(invoice.invoiceType || "INVOICE").toUpperCase() === "PERFORMA" ? "PERFORMA" : "INVOICE";
+    const documentLabel = documentType === "PERFORMA" ? "Performa Invoice" : "Invoice";
     const viewer = download ? null : window.open("", "_blank");
     try {
       setMsg("");
       if (viewer) {
-        viewer.document.title = `Invoice ${invoice.invoiceNo || ""}`;
-        viewer.document.body.innerHTML = "<div style='font-family:Arial;padding:24px'>Generating invoice…</div>";
+        viewer.document.title = `${documentLabel} ${invoice.invoiceNo || ""}`;
+        viewer.document.body.innerHTML = `<div style='font-family:Arial;padding:24px'>Generating ${documentLabel.toLowerCase()}…</div>`;
       }
       const pdfFy = invoice.financialYear || fy;
-      const { blob } = await apiBlob(`/transactions/sales-invoices/${encodeURIComponent(invoice._id)}/pdf?financialYear=${encodeURIComponent(pdfFy)}${download ? "&download=1" : ""}`);
+      const { blob } = await apiBlob(`/transactions/sales-invoices/${encodeURIComponent(invoice._id)}/pdf?financialYear=${encodeURIComponent(pdfFy)}&invoiceType=${encodeURIComponent(documentType)}${download ? "&download=1" : ""}`);
       const url = URL.createObjectURL(blob);
       if (download) {
         const a = document.createElement("a");
@@ -1227,6 +1337,9 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
       setMsg(e.message || "Could not generate invoice PDF");
     }
   };
+
+  const showPerformaConvert = activeDocumentType === "PERFORMA";
+  const listColumnCount = (admin ? 16 : 15) + (showPerformaConvert ? 1 : 0);
 
   const downloadCsv = () => {
     const head = ["Invoice", "Date", "Party", "User", "Taxable", "GST", "Grand Total", "Status"];
@@ -1253,14 +1366,24 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   if (!createMode) {
     return (
       <>
-        <PageHeader onAdd={openCreate} addLabel="CREATE SALES INVOICE" actions />
-        {msg && <div className={`resultBanner ${msg.includes("posted") || msg.includes("updated") || msg.includes("deleted") ? "good" : "bad"}`}>{msg}</div>}
+        <PageHeader onAdd={openCreate} addLabel={activeDocumentType === "PERFORMA" ? "CREATE PERFORMA INVOICE" : "CREATE SALES INVOICE"} actions />
+        {msg && <div className={`resultBanner ${msg.includes("posted") || msg.includes("updated") || msg.includes("deleted") || msg.includes("created") || msg.includes("converted") ? "good" : "bad"}`}>{msg}</div>}
 
         <section className="panel oldDmsSalesList">
+          <div className="oldDmsTabs" style={{ marginBottom: 10 }}>
+            <button
+              className={activeDocumentType === "INVOICE" ? "active" : ""}
+              onClick={() => switchListDocumentType("INVOICE")}
+            >Invoice</button>
+            <button
+              className={activeDocumentType === "PERFORMA" ? "active" : ""}
+              onClick={() => switchListDocumentType("PERFORMA")}
+            >Performa</button>
+          </div>
           <div className="oldDmsToolbar">
             <div className="oldDmsTabs">
-              <button className={activeBucket === "REGULAR" ? "active" : ""} onClick={() => setActiveBucket("REGULAR")}>Regular</button>
-              <button className={activeBucket === "UNREGISTER" ? "active" : ""} onClick={() => setActiveBucket("UNREGISTER")}>UnRegister</button>
+              <button className={activeBucket === "REGULAR" ? "active" : ""} onClick={() => setActiveBucket("REGULAR")}>Registered</button>
+              <button className={activeBucket === "UNREGISTER" ? "active" : ""} onClick={() => setActiveBucket("UNREGISTER")}>Unregistered</button>
             </div>
 
             <div className="oldDmsSearch"><Search size={15} /><input placeholder="Search..." value={search} onChange={(e) => setSearch(e.target.value)} /></div>
@@ -1278,19 +1401,21 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
 
           <div className="oldDmsTableWrap">
             <table className="oldDmsInvoiceListTable">
-              <thead><tr><th>#</th><th>Status</th><th>Invoice No.</th><th>Date</th><th>Party Name / Actions</th><th>Party Limit</th><th>User Name</th><th>Basic Total</th><th>IGST</th><th>CGST</th><th>SGST</th><th>Round Off</th><th>Grand Total</th><th>CN Status</th><th>Net After CN</th>{admin&&<th>Margin</th>}</tr></thead>
+              <thead><tr><th>#</th><th>Status</th><th>{showPerformaConvert ? "Performa No." : "Invoice No."}</th><th>Date</th><th>Party Name / Actions</th><th>Party Limit</th><th>User Name</th><th>Basic Total</th><th>IGST</th><th>CGST</th><th>SGST</th><th>Round Off</th><th>Grand Total</th><th>CN Status</th><th>Net After CN</th>{admin&&<th>Margin</th>}{showPerformaConvert&&<th>Convert to Invoice</th>}</tr></thead>
               <tbody>
-                {!groupedRows.length && <tr><td colSpan={admin?16:15} className="oldDmsEmpty">No sales invoice found for this period.</td></tr>}
+                {!groupedRows.length && <tr><td colSpan={listColumnCount} className="oldDmsEmpty">No {showPerformaConvert ? "performa" : "sales invoice"} found for this period.</td></tr>}
                 {groupedRows.map((group) => (
                   <React.Fragment key={group.key}>
                     <tr className="oldDmsMonthRow" onClick={() => setMonthOpen((p) => ({ ...p, [group.key]: !p[group.key] }))}>
-                      <td colSpan={admin?16:15}><span>{monthOpen[group.key] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<b>{group.label}</b><small>{group.rows.length} invoice{group.rows.length === 1 ? "" : "s"} • {money(group.rows.reduce((s, r) => s + Number(r.grandTotal || 0), 0))}</small></span></td>
+                      <td colSpan={listColumnCount}><span>{monthOpen[group.key] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}<b>{group.label}</b><small>{group.rows.length} {showPerformaConvert ? "performa" : "invoice"}{group.rows.length === 1 ? "" : "s"} • {money(group.rows.reduce((s, r) => s + Number(r.grandTotal || 0), 0))}</small></span></td>
                     </tr>
                     {monthOpen[group.key] && group.rows.map((r, idx) => (
                       <tr key={r._id}>
                         <td>{idx + 1}</td>
                         <td><StatusBadge value={r.workflowStatus || r.status || "POSTED"} /></td>
-                        <td><button className="tableClickLink" onClick={() => openInvoiceEdit(r)} title="Edit Sales Invoice">{r.invoiceNo || "—"}</button></td>
+                        <td>{showPerformaConvert && String(r.status || r.workflowStatus || "").toUpperCase() === "CONVERTED"
+                          ? <span title={`Converted to ${r.convertedInvoiceNo || "Invoice"}`}>{r.invoiceNo || "—"}</span>
+                          : <button className="tableClickLink" onClick={() => openInvoiceEdit(r)} title={showPerformaConvert ? "Edit Performa Invoice" : "Edit Sales Invoice"}>{r.invoiceNo || "—"}</button>}</td>
                         <td>{ymd(r.date || r.createdAt)}</td>
                         <td><button className="tableClickLink" onClick={() => openInvoiceActions(r)} title="Open invoice actions">{r.partyNameDisplay || r.customerNameSnapshot || "—"}</button></td>
                         <td>{money(customerMap.get(String(r.customerGlobalId || ""))?.creditLimit || 0)}</td>
@@ -1304,12 +1429,17 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
                         <td><StatusBadge value={r.creditNoteStatus || "NONE"} /></td>
                         <td><b>{money(r.netInvoiceAmount ?? (Number(r.grandTotal || 0) - Number(r.creditNoteAmount || 0)))}</b>{Number(r.creditNoteAmount || 0) > 0 && <small style={{display:"block"}}>CN {money(r.creditNoteAmount)}</small>}</td>
                         {admin&&<td>{Number(r.grossMarginPct || 0).toFixed(1)}%</td>}
+                        {showPerformaConvert&&<td>
+                          {String(r.status || r.workflowStatus || "").toUpperCase() === "CONVERTED"
+                            ? <><StatusBadge value="CONVERTED" />{r.convertedInvoiceNo && <small style={{ display: "block", marginTop: 4 }}>{r.convertedInvoiceNo}</small>}</>
+                            : <button className="btn ghost" type="button" disabled={convertingId === r._id} onClick={() => convertPerformaToInvoice(r)}>{convertingId === r._id ? "Converting..." : "Convert to Invoice"}</button>}
+                        </td>}
                       </tr>
                     ))}
                   </React.Fragment>
                 ))}
               </tbody>
-              <tfoot><tr><td colSpan="7">TOTAL</td><td>{money(listTotals.basic)}</td><td>{money(listTotals.igst)}</td><td>{money(listTotals.cgst)}</td><td>{money(listTotals.sgst)}</td><td>{money(listTotals.roundOff)}</td><td>{money(listTotals.grand)}</td><td></td><td>{money(listTotals.net)}</td>{admin&&<td />}</tr></tfoot>
+              <tfoot><tr><td colSpan="7">TOTAL</td><td>{money(listTotals.basic)}</td><td>{money(listTotals.igst)}</td><td>{money(listTotals.cgst)}</td><td>{money(listTotals.sgst)}</td><td>{money(listTotals.roundOff)}</td><td>{money(listTotals.grand)}</td><td></td><td>{money(listTotals.net)}</td>{admin&&<td />}{showPerformaConvert&&<td />}</tr></tfoot>
             </table>
           </div>
         </section>
@@ -1319,17 +1449,22 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
             <section className="panel modalPanel" style={{ maxWidth: 620 }}>
               <div className="formTitle">
                 <div>
-                  <h3><FileText size={18}/> Invoice Actions</h3>
+                  <h3><FileText size={18}/> {String(actionInvoice.invoiceType || "INVOICE").toUpperCase() === "PERFORMA" ? "Performa Actions" : "Invoice Actions"}</h3>
                   <span>{actionInvoice.invoiceNo} • {actionInvoice.partyNameDisplay || actionInvoice.customerNameSnapshot || "Party"}</span>
                 </div>
                 <div className="formTitleActions"><button className="iconBtn" type="button" onClick={() => setActionInvoice(null)}><X/></button></div>
               </div>
               <div className="formGrid" style={{ gridTemplateColumns: "repeat(2,minmax(0,1fr))" }}>
-                <button className="btn primary" type="button" onClick={() => { const row = actionInvoice; setActionInvoice(null); openInvoicePdf(row); }}><FileText size={15}/> View / Print Invoice</button>
-                <button className="btn ghost" type="button" onClick={() => { const row = actionInvoice; setActionInvoice(null); openInvoicePdf(row, true); }}><Download size={15}/> Download Invoice</button>
-                <button className="btn ghost" type="button" disabled={emailSendingId === actionInvoice._id} onClick={() => sendInvoiceMail(actionInvoice)}><Mail size={15}/>{emailSendingId === actionInvoice._id ? " Sending..." : " Send Invoice Mail"}</button>
-                {String(actionInvoice.workflowStatus || "").toUpperCase() !== "DELIVERED" && (
-                  <button className="btn ghost" type="button" onClick={() => { const row = actionInvoice; setActionInvoice(null); openDelivery(row); }}><PackageCheck size={15}/> Mark Delivered</button>
+                <button className="btn primary" type="button" onClick={() => { const row = actionInvoice; setActionInvoice(null); openInvoicePdf(row); }}><FileText size={15}/> View / Print {String(actionInvoice.invoiceType || "INVOICE").toUpperCase() === "PERFORMA" ? "Performa" : "Invoice"}</button>
+                <button className="btn ghost" type="button" onClick={() => { const row = actionInvoice; setActionInvoice(null); openInvoicePdf(row, true); }}><Download size={15}/> Download {String(actionInvoice.invoiceType || "INVOICE").toUpperCase() === "PERFORMA" ? "Performa" : "Invoice"}</button>
+                {String(actionInvoice.invoiceType || "INVOICE").toUpperCase() !== "PERFORMA" && (<>
+                  <button className="btn ghost" type="button" disabled={emailSendingId === actionInvoice._id} onClick={() => sendInvoiceMail(actionInvoice)}><Mail size={15}/>{emailSendingId === actionInvoice._id ? " Sending..." : " Send Invoice Mail"}</button>
+                  {String(actionInvoice.workflowStatus || "").toUpperCase() !== "DELIVERED" && (
+                    <button className="btn ghost" type="button" onClick={() => { const row = actionInvoice; setActionInvoice(null); openDelivery(row); }}><PackageCheck size={15}/> Mark Delivered</button>
+                  )}
+                </>)}
+                {String(actionInvoice.invoiceType || "INVOICE").toUpperCase() === "PERFORMA" && String(actionInvoice.status || actionInvoice.workflowStatus || "").toUpperCase() !== "CONVERTED" && (
+                  <button className="btn ghost" type="button" disabled={convertingId === actionInvoice._id} onClick={() => { const row = actionInvoice; setActionInvoice(null); convertPerformaToInvoice(row); }}>{convertingId === actionInvoice._id ? "Converting..." : "Convert to Invoice"}</button>
                 )}
               </div>
               {actionInvoice.consignmentNote?.cnNumber && (
@@ -1392,45 +1527,52 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
   const createForm = (
     <>
       {!embedded && <PageHeader actions={false} />}
-      {msg && <div className={`resultBanner ${msg.includes("posted") || msg.includes("updated") || msg.includes("deleted") ? "good" : "bad"}`}>{msg}</div>}
+      {msg && <div className={`resultBanner ${msg.includes("posted") || msg.includes("updated") || msg.includes("deleted") || msg.includes("created") || msg.includes("converted") ? "good" : "bad"}`}>{msg}</div>}
       {seriesMsg && !editId && <div className="resultBanner bad">{seriesMsg}</div>}
 
       <SalesInvoiceLayout>
       <section className="panel oldDmsInvoiceComposer salesInvoiceFullWidth">
         <div className="oldDmsCreateHead">
-          <div><b>{editId ? `EDIT SALES INVOICE ${header.invoiceNo || ""}` : sourceOrderId ? `ORDER INVOICE • ${orderDraft?.orderNo || header.orderNo || ""}` : "CREATE SALES INVOICE"}</b><small>{fyLabel(fy)}</small></div>
+          <div><b>{editId
+            ? `${currentInvoiceType === "PERFORMA" ? "EDIT PERFORMA INVOICE" : "EDIT SALES INVOICE"} ${header.invoiceNo || ""}`
+            : sourceOrderId
+              ? `INVOICE • ${orderDraft?.orderNo || header.orderNo || ""}`
+              : currentInvoiceType === "PERFORMA" ? "CREATE PERFORMA INVOICE" : "CREATE SALES INVOICE"}</b><small>{fyLabel(fy)}</small></div>
           <div>
-            {editId && <button className="oldDmsDeleteBtn" disabled={loading} onClick={deleteInvoice} title="Delete Invoice"><Trash2 size={15} /></button>}
+            {editId && <button className="oldDmsDeleteBtn" disabled={loading} onClick={deleteInvoice} title={currentInvoiceType === "PERFORMA" ? "Delete Performa" : "Delete Invoice"}><Trash2 size={15} /></button>}
             {embedded ? (onRemoveInvoice && <button className="oldDmsCloseBtn" onClick={onRemoveInvoice} title="Remove this invoice"><X size={17} /></button>) : <button className="oldDmsCloseBtn" onClick={backToList} title="Back to Sales Invoice List"><X size={17} /></button>}
           </div>
         </div>
 
         <div className="oldDmsTopLine">
+          {!sourceOrderId && <label data-invoice-field="invoiceType"><span>Invoice Type *</span><select value={currentInvoiceType} disabled={Boolean(editId)} onChange={(e) => changeInvoiceType(e.target.value)}><option value="INVOICE">Invoice</option><option value="PERFORMA">Performa</option></select></label>}
           <label data-invoice-field="buyer" className="od-wide"><span>Buyer / Party *</span><div className="lookupSelectRow"><select value={customerId} onChange={(e) => setCustomerId(e.target.value)}><option value="">Select Buyer / Party</option>{customers.map((c) => <option key={c.globalCustomerId} value={c.globalCustomerId}>{partyOptionLabel(c)}{c.gradeCode ? ` • Grade ${c.gradeCode} • ${Number(c.gradeDiscountPct || 0).toFixed(2)}%` : ""}</option>)}</select><CreateLookupButton to="/dms/customers" label="Create" resource="customer" selectedValue={customerId} onReturn={load} /></div></label>
           <label data-invoice-field="date"><span>Order Date *</span><input type="date" value={header.date} onChange={(e) => setH("date", e.target.value)} /></label>
           <label data-invoice-field="invoice" className="od-wide">
-            <span>Invoice Number *{!editId && activeInvoiceSeries?.cashInvoice ? " • UNREGISTERED / CASH (C)" : ""}</span>
+            <span>{currentInvoiceType === "PERFORMA" ? "Performa Number" : "Invoice Number"} *{!editId && currentInvoiceType === "INVOICE" && activeInvoiceSeries?.cashInvoice ? " • UNREGISTERED / CASH (C)" : ""}</span>
             <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%" }}>
               {!editId && invoicePrefix && <strong style={{ whiteSpace: "nowrap", fontSize: "inherit" }}>{invoicePrefix}</strong>}
               <input
                 style={{ flex: "1 1 90px", minWidth: 60, width: "100%" }}
                 value={header.invoiceNo}
                 inputMode={editId ? undefined : "numeric"}
+                readOnly={!editId && currentInvoiceType === "PERFORMA"}
                 onChange={(e) => {
+                  if (!editId && currentInvoiceType === "PERFORMA") return;
                   const value = editId ? e.target.value : e.target.value.replace(/\D/g, "");
                   if (!editId) invoiceNoManuallyEditedRef.current = true;
                   setH("invoiceNo", value);
                 }}
-                placeholder={nextInvoiceNo || (editId ? "Invoice Number" : "Number only")}
+                placeholder={nextInvoiceNo || (editId ? (currentInvoiceType === "PERFORMA" ? "Performa Number" : "Invoice Number") : "Number only")}
                 autoComplete="off"
               />
               {!editId && invoiceSuffix && <strong style={{ whiteSpace: "nowrap", fontSize: "inherit" }}>{invoiceSuffix}</strong>}
             </div>
-            {!editId && fullInvoiceNumberPreview && <small>Full printed invoice number: <b>{fullInvoiceNumberPreview}</b></small>}
-            {!editId && customerId && !activeInvoiceSeries && <small>Loading the selected party's invoice series...</small>}
+            {!editId && fullInvoiceNumberPreview && <small>Full printed {currentInvoiceType === "PERFORMA" ? "performa" : "invoice"} number: <b>{fullInvoiceNumberPreview}</b></small>}
+            {!editId && !activeInvoiceSeries && (currentInvoiceType === "PERFORMA" || customerId) && <small>Loading the {currentInvoiceType === "PERFORMA" ? "fixed Performa" : "selected party's invoice"} series...</small>}
           </label>
-          <label data-invoice-field="warehouse" className="od-warehouse"><span>Warehouse *</span><select value={header.warehouseId || ""} onChange={(e) => setH("warehouseId", e.target.value)}><option value="">Select Warehouse</option>{warehouses.map((w) => <option key={w._id} value={w._id}>{w.title || w.reference || "Warehouse"}</option>)}</select></label>
-          {totals.grand > 49999 && <label data-invoice-field="arn"><span>ARN Number *</span><input value={header.arn} onChange={(e) => setH("arn", e.target.value)} /></label>}
+          {!sourceOrderId && <label data-invoice-field="warehouse" className="od-warehouse"><span>Warehouse *</span><select value={header.warehouseId || ""} onChange={(e) => setH("warehouseId", e.target.value)}><option value="">Select Warehouse</option>{warehouses.map((w) => <option key={w._id} value={w._id}>{w.title || w.reference || "Warehouse"}</option>)}</select></label>}
+          {currentInvoiceType === "INVOICE" && totals.grand > 49999 && <label data-invoice-field="arn"><span>ARN Number *</span><input value={header.arn} onChange={(e) => setH("arn", e.target.value)} /></label>}
 
           {customer && <label data-invoice-field="customerGrade"><span>Customer Grade</span><input readOnly value={customer.gradeCode ? `${customer.gradeCode}${customer.gradeName ? ` - ${customer.gradeName}` : ""}` : "NO GRADE"} /><small>Assigned in Customer Master</small></label>}
           {customer && <label data-invoice-field="customerGradeDiscount"><span>Grade Discount %</span><input readOnly value={`${Number(customer.gradeDiscountPct || 0).toFixed(2)}%`} /><small>LIVE FROM CUSTOMER GRADES • Default Basic = MRP ex GST − Grade %</small></label>}
@@ -1452,7 +1594,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
                 disabled={transporterLoading || transporterOptions.length === 0}
               >
                 {transporterOptions.length > 1 && <option value="">Select Transporter</option>}
-                {transporterOptions.length === 0 && <option value="">No Eligible City Transporter</option>}
+                {transporterOptions.length === 0 && <option value="">No Assigned Transporter</option>}
                 {transporterOptions.map((t) => (
                   <option key={t.transporterId} value={t.transporterId}>
                     {t.name}
@@ -1461,14 +1603,10 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
               </select>
               <small>
                 {transporterLoading
-                  ? "Loading city transporters..."
+                  ? "Loading assigned transporters..."
                   : transporterOptions.length
-                    ? editId
-                      ? `${transporterMatchType === "PINCODE" ? `EXACT PINCODE ${customerDeliveryAddress?.pincode || ""}` : `CITY ${customerDeliveryCity || ""}`} • ${transporterOptions.length} available`
-                      : `CITY ${customerDeliveryCity || ""} • ${transporterOptions.length} available • exact-pincode transporters excluded • last used auto-selected when eligible`
-                    : editId
-                      ? `No transporter serves ${customerDeliveryAddress?.pincode || customerDeliveryCity || "this customer"}`
-                      : `No eligible city transporter after excluding exact pincode ${customerDeliveryAddress?.pincode || ""}`}
+                    ? `${transporterMatchType === "PINCODE" ? `EXACT PINCODE ${customerDeliveryAddress?.pincode || ""}` : transporterMatchType === "CITY" ? `CITY ${customerDeliveryCity || ""}` : "CUSTOMER ASSIGNMENT"} • ${transporterOptions.length} available • assigned transporter auto-selected when available`
+                    : `No transporter is assigned/mapped for ${customerDeliveryAddress?.pincode || customerDeliveryCity || "this customer"}`}
               </small>
             </label>
           )}
@@ -1485,10 +1623,10 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
               <label data-invoice-field="netQty" className={r.qtyError ? "od-error" : ""}><span>Net Qty *</span><input type="number" min="0" value={r.qty} onChange={(e) => changeRow(i, "qty", Number(e.target.value))} /></label>
               <label data-invoice-field="unit"><span>Unit</span><input readOnly value={r.basicUnit || ""} /></label>
               <label data-invoice-field="mrp"><span>MRP</span><input readOnly value={Number(r.mrp || 0).toFixed(3)} /></label>
-              <label data-invoice-field="grade"><span>Grade %</span><input readOnly value={r.gradeDiscountPct || 0} /><small>{r.productId ? `MRP ex GST ₹${(Number(r.mrp || 0) / (1 + Number(r.gstRate || 0) / 100)).toFixed(2)}` : ""}</small></label>
+              <label data-invoice-field="grade"><span>Grade Discount %</span><input readOnly value={r.gradeDiscountPct || 0} /><small>{sourceOrderId ? "Applied once in Basic ₹ (saved order grade)" : "Applied once in Basic ₹ from MRP ex GST"}</small></label>
               <label data-invoice-field="sale"><span>Sale ₹ incl GST</span><input type="number" step="0.01" value={r.saleRate || 0} onChange={(e) => changeSaleRate(i, Number(e.target.value))} /></label>
               <label data-invoice-field="basic" className={billingErrorMap.has(i) ? "od-error" : ""}><span>Basic ₹ ex GST</span><input type="number" step="0.01" value={r.basicRate || 0} onChange={(e) => changeBasicRate(i, Number(e.target.value))} />{billingErrorMap.has(i) && <small>{billingErrorMap.get(i)}</small>}</label>
-              <label data-invoice-field="discount"><span>Disc %</span><input type="number" step="0.01" value={r.discountPct || 0} onChange={(e) => changeRow(i, "discountPct", Number(e.target.value))} /></label>
+              <label data-invoice-field="discount"><span>Disc %</span><input type="number" min="0" max="100" step="0.01" value={r.discountPct || 0} onChange={(e) => changeRow(i, "discountPct", Number(e.target.value))} /><small>Additional item discount only • net basic: {money(Number(r.qty || 0) > 0 ? Number(r.taxable || 0) / Number(r.qty) * (totals.lineSubtotal > 0 ? Math.max(0, (totals.lineSubtotal - totals.discountTotal) / totals.lineSubtotal) : 1) : 0)} / unit</small></label>
               <label data-invoice-field="gst"><span>GST %</span><input readOnly value={r.gstRate || 0} /></label>
               <label data-invoice-field="total"><span>Basic Total</span><input type="text" inputMode="decimal" value={basicTotalEdit?.index === i ? basicTotalEdit.value : String(r.taxable ?? "")} onFocus={(e) => beginBasicTotalEdit(i, e.currentTarget.value)} onChange={(e) => editBasicTotal(i, e.target.value)} onBlur={() => finishBasicTotalEdit(i)} aria-label="Basic Total" /></label>
               <button className="oldDmsRemoveBtn" disabled={rows.length === 1} onClick={() => setRows((rs) => rs.filter((_, x) => x !== i))} title="Remove Product"><Trash2 size={14} /></button>
@@ -1545,11 +1683,11 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
             </div>
 
             <div className="oldDmsMiniFields oldDmsEinvoiceFields">
-              <label data-invoice-field="eStatus"><span>GST e-Invoice Status</span><select value={header.eInvoice?.status || "NOT_GENERATED"} onChange={(e) => setEInvoice("status", e.target.value)}><option value="NOT_GENERATED">Not Generated</option><option value="PENDING">Pending</option><option value="GENERATED">Generated</option><option value="CANCELLED">Cancelled</option></select></label>
-              <label data-invoice-field="irn" className="od-wide"><span>IRN</span><input value={header.eInvoice?.irn || ""} onChange={(e) => setEInvoice("irn", e.target.value)} placeholder="64-character Invoice Reference Number" /></label>
-              <label data-invoice-field="ack"><span>Ack No.</span><input value={header.eInvoice?.ackNo || ""} onChange={(e) => setEInvoice("ackNo", e.target.value)} /></label>
-              <label data-invoice-field="ackDate"><span>Ack Date</span><input type="date" value={header.eInvoice?.ackDate || ""} onChange={(e) => setEInvoice("ackDate", e.target.value)} /></label>
-              <label data-invoice-field="qr" className="od-wide"><span>Signed QR Payload</span><textarea rows="2" value={header.eInvoice?.signedQrPayload || ""} onChange={(e) => setEInvoice("signedQrPayload", e.target.value)} placeholder="Paste IRP signed QR payload; later GST API will auto-fill this" /></label>
+              <label data-invoice-field="eStatus"><span>GST e-Invoice Status</span><select disabled={currentInvoiceType === "PERFORMA"} value={header.eInvoice?.status || "NOT_GENERATED"} onChange={(e) => setEInvoice("status", e.target.value)}><option value="NOT_GENERATED">Not Generated</option><option value="PENDING">Pending</option><option value="GENERATED">Generated</option><option value="CANCELLED">Cancelled</option></select></label>
+              <label data-invoice-field="irn" className="od-wide"><span>IRN</span><input disabled={currentInvoiceType === "PERFORMA"} value={header.eInvoice?.irn || ""} onChange={(e) => setEInvoice("irn", e.target.value)} placeholder="64-character Invoice Reference Number" /></label>
+              <label data-invoice-field="ack"><span>Ack No.</span><input disabled={currentInvoiceType === "PERFORMA"} value={header.eInvoice?.ackNo || ""} onChange={(e) => setEInvoice("ackNo", e.target.value)} /></label>
+              <label data-invoice-field="ackDate"><span>Ack Date</span><input disabled={currentInvoiceType === "PERFORMA"} type="date" value={header.eInvoice?.ackDate || ""} onChange={(e) => setEInvoice("ackDate", e.target.value)} /></label>
+              <label data-invoice-field="qr" className="od-wide"><span>Signed QR Payload</span><textarea disabled={currentInvoiceType === "PERFORMA"} rows="2" value={header.eInvoice?.signedQrPayload || ""} onChange={(e) => setEInvoice("signedQrPayload", e.target.value)} placeholder={currentInvoiceType === "PERFORMA" ? "Performa does not generate GST e-Invoice data" : "Paste IRP signed QR payload; later GST API will auto-fill this"} /></label>
             </div>
 
             {!!hsnSummary.length && <div className="oldDmsHsnWrap"><table><thead><tr><th>HSN</th><th>Taxable Value</th><th>Rate</th>{header.gstType === "IGST" ? <th>IGST</th> : <><th>CGST</th><th>SGST</th></>}<th>Total</th></tr></thead><tbody>{hsnSummary.map((h) => <tr key={`${h.hsn}-${h.rate}`}><td>{h.hsn}</td><td>{money(h.taxable)}</td><td>{h.rate}%</td>{header.gstType === "IGST" ? <td>{money(h.igst)}</td> : <><td>{money(h.cgst)}</td><td>{money(h.sgst)}</td></>}<td>{money(h.total)}</td></tr>)}<tr className="od-hsn-total"><td>TOTAL (Pre-Round)</td><td>{money(totals.taxable)}</td><td></td>{header.gstType === "IGST" ? <td>{money(totals.tax)}</td> : <><td>{money(totals.tax / 2)}</td><td>{money(totals.tax / 2)}</td></>}<td>{money(totals.taxable + totals.tax)}</td></tr><tr><td colSpan={header.gstType === "IGST" ? 4 : 5}>ROUND OFF</td><td>{money(totals.roundOff)}</td></tr><tr className="od-hsn-grand"><td colSpan={header.gstType === "IGST" ? 4 : 5}>GRAND TOTAL</td><td>{money(totals.grand)}</td></tr></tbody></table></div>}
@@ -1563,7 +1701,7 @@ export default function SalesInvoicePage({ embedded = false, batchIndex = 1, bat
             {header.gstType === "IGST" ? <div><span>IGST</span><b>{money(totals.tax)}</b></div> : <><div><span>CGST</span><b>{money(totals.tax / 2)}</b></div><div><span>SGST</span><b>{money(totals.tax / 2)}</b></div></>}
             <div><span>Round Off</span><b>{money(totals.roundOff)}</b></div>
             <div className="grand"><span>Grand Total</span><b>{money(totals.grand)}</b></div>
-            {!(embedded || batchMode) && <button className="oldDmsSubmitBtn" disabled={loading || !customerId || !String(header.invoiceNo || "").trim()} onClick={() => saveInvoice()}>{loading ? "Saving..." : editId ? "Update Sales Invoice" : "Create Sales Invoice"}</button>}
+            {!(embedded || batchMode) && <button className="oldDmsSubmitBtn" disabled={loading || !customerId || !String(header.invoiceNo || "").trim()} onClick={() => saveInvoice()}>{loading ? "Saving..." : editId ? (currentInvoiceType === "PERFORMA" ? "Update Performa Invoice" : "Update Sales Invoice") : (currentInvoiceType === "PERFORMA" ? "Create Performa Invoice" : "Create Sales Invoice")}</button>}
             {(embedded || batchMode) && <div className="oldDmsEmpty">This invoice will be posted with <b>Submit All Invoices</b>.</div>}
           </div>
         </div>

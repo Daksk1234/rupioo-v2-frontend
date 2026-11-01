@@ -37,7 +37,7 @@ export const resourceSchemas={
   "/dms/purchase-invoices":document,
   "/dms/purchase-returns":document,
   "/dms/stock":stock,
-  "/dms/warehouses":[f("title","Warehouse Name"),f("reference","Warehouse Code"),f("address","Address"),f("pincode","Pincode"),f("manager","Manager"),f("mobile","Warehouse Mobile"),f("contactEmail","Warehouse Contact Email","email"),f("status","Status","select",["ACTIVE","INACTIVE"])],
+  "/dms/warehouses":[f("title","Warehouse Name"),f("reference","Warehouse Code"),f("address","Address"),f("pincode","Pincode"),f("manager","Manager"),f("mobile","Warehouse Mobile"),f("contactEmail","Warehouse Contact Email","email"),f("loginEmail","App Login Email","email"),f("loginPassword","App Login / Reset Password","password"),f("isMainWarehouse","Permanent Main Warehouse","checkbox"),f("status","Status","select",["ACTIVE","INACTIVE"])],
   "/dms/stock-transfer":[f("title","Product / Transfer"),f("reference","Transfer No."),f("date","Date","date"),f("quantity","Quantity","number"),f("from","From Warehouse"),f("to","To Warehouse"),f("status","Status","select",["DRAFT","DISPATCHED","RECEIVED","CANCELLED"]),f("notes","Remarks","textarea")],
   "/dms/closing-stock":stock,
   "/dms/stock-ageing":report,
@@ -51,6 +51,7 @@ export const resourceSchemas={
   "/dms/pnl":report,
   "/dms/balance-sheet":report,
   "/dms/cma":report,
+  "/dms/proposed-balance-sheet":report,
   "/dms/gst-dashboard":report,
   "/dms/gst-reports":report,
   "/dms/gstr1":report,
@@ -88,7 +89,7 @@ export const resourceSchemas={
 };
 
 export const reportLikePaths=new Set([
-  "/master/audit","/dms/health","/dms/stock-ageing","/dms/ledger","/dms/trial-balance","/dms/trading","/dms/pnl","/dms/balance-sheet","/dms/cma","/dms/gst-dashboard","/dms/gstr1","/dms/gstr2b","/dms/gstr3b","/dms/gstr9","/hr/ledger"
+  "/master/audit","/dms/health","/dms/stock-ageing","/dms/ledger","/dms/trial-balance","/dms/trading","/dms/pnl","/dms/balance-sheet","/dms/cma","/dms/proposed-balance-sheet","/dms/gst-dashboard","/dms/gstr1","/dms/gstr2b","/dms/gstr3b","/dms/gstr9","/hr/ledger"
 ]);
 
 export function fieldsFor(page){return resourceSchemas[page.path]||common;}

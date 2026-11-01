@@ -772,3 +772,7 @@
   .subHeaderReportToggle span { display: none; }
   .subHeaderReportToggle { padding: 0 5px; }
 }
+
+/* Transaction -> Books of Accounts: nested tab group */
+.transactionBooksSubtabs{display:flex;align-items:center;gap:5px;max-width:100%;overflow-x:auto;white-space:nowrap;flex-shrink:1;border-left:1px solid var(--border,#d1d5db);padding-left:8px;}
+.transactionBooksSubtabs .subHeaderTab{font-size:11px;}

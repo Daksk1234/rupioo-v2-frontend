@@ -43,8 +43,21 @@ const REPORT_CENTER_SUBTABS = [
   { key: "MANAGEMENT", label: "MANAGEMENT" },
 ];
 
+const TRANSACTION_CREATE_SUBPAGES = {
+  "/dms/banking/add": "/dms/banking",
+  "/dms/banking/statement-upload": "/dms/banking",
+  "/dms/cashbook/add": "/dms/cashbook",
+  "/dms/cashbook/bulk": "/dms/cashbook",
+};
+
 function canViewPath(pageAccess = {}, path = "") {
+  // Routed add/upload screens do not have a separate catalogue entry.
+  // Read access is inherited from the parent; explicit create denial is honored.
+  const parent = TRANSACTION_CREATE_SUBPAGES[path];
+  if (parent) return canViewPath(pageAccess,parent) && pageAccess?.[parent]?.create !== false;
   if (pageAccess?.[path]?.view === true) return true;
+  if (path === "/dms/cashbook") return ["/dms/cashier", "/dms/receipts", "/dms/payments"].some(p => pageAccess?.[p]?.view === true);
+  if (path === "/dms/proposed-balance-sheet") return pageAccess?.["/dms/balance-sheet"]?.view === true;
   if (path === "/dms/all-reports") {
     return pageAccess?.["/dms/reports"]?.view === true;
   }
@@ -111,7 +124,7 @@ export default function AppShell({ children, appKey }) {
           !PERMISSION_EXEMPT_PATHS.has(location.pathname) &&
           !canViewPath(fresh?.pageAccess || {}, location.pathname)
         ) {
-          navigate(fresh?.homePath || "/no-access", { replace: true });
+          navigate("/no-access", { replace: true });
         }
       })
       .catch(() => {});
@@ -150,7 +163,7 @@ export default function AppShell({ children, appKey }) {
 
     return visibleGroups
       .flatMap((group) =>
-        group.items.map((item) => ({ ...item, group: group.group }))
+        group.items.filter(item => !item.navHidden && !(group.group === "Transaction" && item.bookChild)).map((item) => ({ ...item, group: group.group }))
       )
       .filter((item) =>
         `${item.label} ${item.description} ${item.group}`
@@ -177,6 +190,12 @@ export default function AppShell({ children, appKey }) {
     [visibleGroups, activeGroup],
   );
 
+  const isTransactionGroup = activeSubnavGroup?.group === "Transaction";
+  const bookItems = isTransactionGroup ? activeSubnavGroup.items.filter(item => item.bookChild) : [];
+  const isBookPage = bookItems.some(item => item.path === location.pathname);
+  const topSubtabs = isTransactionGroup
+    ? activeSubnavGroup.items.filter(item => !item.navHidden && !item.bookChild)
+    : (activeSubnavGroup?.items || []).filter(item => !item.navHidden);
   const isReportCenter = location.pathname === REPORT_CENTER_PATH;
   const activeReportCenterGroup = useMemo(() => {
     const requested = new URLSearchParams(location.search).get("group");
@@ -349,7 +368,7 @@ export default function AppShell({ children, appKey }) {
                 {openGroup === group.group && (
                   <div className="topDropdown moduleDropdown animateMenu">
                     <div className="dropdownTitle">{group.group}</div>
-                    {group.items.map((item) => {
+                    {group.items.filter(item => !item.navHidden && !(group.group === "Transaction" && item.bookChild)).map((item) => {
                       const Icon = item.icon;
                       return (
                         <NavLink
@@ -369,6 +388,9 @@ export default function AppShell({ children, appKey }) {
                         </NavLink>
                       );
                     })}
+                    {group.group === "Transaction" && group.items.some(item => item.bookChild) && (
+                      <NavLink className="topModuleLink" to={group.items.find(item => item.bookChild).path}><span><strong>Books of Accounts</strong></span></NavLink>
+                    )}
                   </div>
                 )}
               </div>
@@ -399,7 +421,7 @@ export default function AppShell({ children, appKey }) {
                       <div className="moreDropdownGroup" key={group.group}>
                         <div className="dropdownTitle">{group.group}</div>
                         <div className="moreDropdownLinks">
-                          {group.items.map((item) => {
+                          {group.items.filter(item => !item.navHidden && !(group.group === "Transaction" && item.bookChild)).map((item) => {
                             const Icon = item.icon;
                             return (
                               <NavLink
@@ -419,6 +441,9 @@ export default function AppShell({ children, appKey }) {
                               </NavLink>
                             );
                           })}
+                          {group.group === "Transaction" && group.items.some(item => item.bookChild) && (
+                            <NavLink className="topModuleLink" to={group.items.find(item => item.bookChild).path}><span><strong>Books of Accounts</strong></span></NavLink>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -605,7 +630,7 @@ export default function AppShell({ children, appKey }) {
               <div className="mobileNavGroup" key={group.group}>
                 <div className="mobileNavTitle">{group.group}</div>
                 <div className="mobileNavLinks">
-                  {group.items.map((item) => {
+                  {group.items.filter(item => !item.navHidden && !(group.group === "Transaction" && item.bookChild)).map((item) => {
                     const Icon = item.icon;
                     return (
                       <NavLink
@@ -620,6 +645,9 @@ export default function AppShell({ children, appKey }) {
                       </NavLink>
                     );
                   })}
+                  {group.group === "Transaction" && group.items.some(item => item.bookChild) && (
+                    <NavLink className="mobileNavLink" to={group.items.find(item => item.bookChild).path}>Books of Accounts</NavLink>
+                  )}
                 </div>
               </div>
             ))}
@@ -645,7 +673,7 @@ export default function AppShell({ children, appKey }) {
                       {item.label}
                     </NavLink>
                   ))
-                : (activeSubnavGroup?.items || []).map((item) => (
+                : topSubtabs.map((item) => (
                     <NavLink
                       key={item.path}
                       to={item.path}
@@ -656,6 +684,9 @@ export default function AppShell({ children, appKey }) {
                       {item.label}
                     </NavLink>
                   ))}
+              {isTransactionGroup && bookItems.length > 0 && (
+                <NavLink to={bookItems[0].path} className={() => `subHeaderTab ${isBookPage ? "active" : ""}`}>Books of Accounts</NavLink>
+              )}
               {!isReportCenter && !activeSubnavGroup && (
                 <span className="subHeaderCurrentPage">
                   {location.pathname === "/profile"
@@ -667,6 +698,11 @@ export default function AppShell({ children, appKey }) {
               )}
             </nav>
 
+            {isBookPage && (
+              <nav className="transactionBooksSubtabs" aria-label="Books of Accounts">
+                {bookItems.map(item => <NavLink key={item.path} to={item.path} className={({isActive}) => `subHeaderTab ${isActive ? "active" : ""}`}>{item.label}</NavLink>)}
+              </nav>
+            )}
             {isReportCenter && (
               <label className="subHeaderReportToggle">
                 <input
