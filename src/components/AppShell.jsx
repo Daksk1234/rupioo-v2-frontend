@@ -15,6 +15,8 @@ import Logo from "./Logo.jsx";
 import UiPersonalizer from "./UiPersonalizer.jsx";
 import ColumnStudio from "./ColumnStudio.jsx";
 import { nav } from "../config/modules.js";
+import { mayEditPostedVoucher } from "../lib/voucherEditPermissions.js";
+import { CHEQUE_CONTROL_PATH, canDiscoverChequeControl } from "../lib/chequeControlNavigation.js";
 import { configuredFinancialYear, financialYearOptions, normalizeFinancialYear } from "../lib/financialYear.js";
 import {
   clearSession,
@@ -44,13 +46,17 @@ const REPORT_CENTER_SUBTABS = [
 ];
 
 const TRANSACTION_CREATE_SUBPAGES = {
+  "/dms/transactions/contra": "/dms/banking",
   "/dms/banking/add": "/dms/banking",
   "/dms/banking/statement-upload": "/dms/banking",
   "/dms/cashbook/add": "/dms/cashbook",
   "/dms/cashbook/bulk": "/dms/cashbook",
 };
 
-function canViewPath(pageAccess = {}, path = "") {
+function canViewPath(pageAccess = {}, path = "", sessionUser = null) {
+  if (path === CHEQUE_CONTROL_PATH) return canDiscoverChequeControl(sessionUser);
+  const editMatch = /^\/dms\/transactions\/edit\/(receipts|payments)\/[^/]+$/.exec(path);
+  if (editMatch) return mayEditPostedVoucher(sessionUser, editMatch[1]);
   // Routed add/upload screens do not have a separate catalogue entry.
   // Read access is inherited from the parent; explicit create denial is honored.
   const parent = TRANSACTION_CREATE_SUBPAGES[path];
@@ -122,7 +128,7 @@ export default function AppShell({ children, appKey }) {
         // PAGE_PERMISSION_MAP entry.
         if (
           !PERMISSION_EXEMPT_PATHS.has(location.pathname) &&
-          !canViewPath(fresh?.pageAccess || {}, location.pathname)
+          !canViewPath(fresh?.pageAccess || {}, location.pathname, merged)
         ) {
           navigate("/no-access", { replace: true });
         }
@@ -151,7 +157,7 @@ export default function AppShell({ children, appKey }) {
       .map((group) => ({
         ...group,
         items: (group.items || []).filter(
-          (item) => canViewPath(pageAccess, item.path)
+          (item) => canViewPath(pageAccess, item.path, user)
         ),
       }))
       .filter((group) => group.items.length > 0);

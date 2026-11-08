@@ -27,7 +27,8 @@ import CreateLookupButton, {
   isLookupCreate,
   notifyLookupCreated,
 } from "../components/CreateLookupButton.jsx";
-import { api, apiBlob } from "../lib/api.js";
+import { api, apiBlob, getUser } from "../lib/api.js";
+import {currentFinancialYear,financialYearOptions} from "../lib/financialYear.js";
 import { isAdminUser } from "../lib/adminVisibility.js";
 
 const blank = {
@@ -43,6 +44,7 @@ const blank = {
   packingUnit: "",
   qtyInBag: 1,
   openingStock: 0,
+  openingStockByFY: {},
   openingRate: 0,
   averagePurchasePrice: 0,
   landedCost: 0,
@@ -368,6 +370,8 @@ export default function ProductPage() {
   const [show, setShow] = useState(false);
   const [edit, setEdit] = useState(null);
   const [form, setForm] = useState(blank);
+  const [stockOpeningFY,setStockOpeningFY]=useState(currentFinancialYear());
+  const stockYears=financialYearOptions(getUser(),{count:15});
   const [units, setUnits] = useState([]);
   const [categories, setCategories] = useState([]);
   const [warehouses, setWarehouses] = useState([]);
@@ -1903,6 +1907,34 @@ export default function ProductPage() {
                   }}
                 />
               </label>
+              {admin && <>
+                <label>Financial Year for Stock Opening
+                  <select value={stockOpeningFY} onChange={event=>setStockOpeningFY(event.target.value)}>
+                    {[...new Set([...stockYears,...Object.keys(form.openingStockByFY||{})])].sort().reverse().map(y=><option key={y} value={y}>{y}</option>)}
+                  </select>
+                  <small>Enter an opening separately for a historical financial year without overwriting the current stock balance.</small>
+                </label>
+                <label>FY Opening Quantity
+                  <input type="number" min="0" step="0.001"
+                    value={form.openingStockByFY?.[stockOpeningFY]?.qty ?? (typeof form.openingStockByFY?.[stockOpeningFY]==='number' ? form.openingStockByFY[stockOpeningFY] : '')}
+                    placeholder="Not set"
+                    onChange={event=>setForm(prev=>{
+                      const original=prev.openingStockByFY?.[stockOpeningFY];
+                      const row=original&&typeof original==='object'?original:{qty:Number(original||0),rate:Number(prev.openingRate||0)};
+                      return {...prev,openingStockByFY:{...(prev.openingStockByFY||{}),[stockOpeningFY]:{...row,qty:Number(event.target.value)}}};
+                    })}/>
+                </label>
+                <label>FY Opening Rate
+                  <input type="number" min="0" step="0.01"
+                    value={form.openingStockByFY?.[stockOpeningFY]?.rate ?? ''}
+                    placeholder="Not set"
+                    onChange={event=>setForm(prev=>{
+                      const original=prev.openingStockByFY?.[stockOpeningFY];
+                      const row=original&&typeof original==='object'?original:{qty:Number(original||0)};
+                      return {...prev,openingStockByFY:{...(prev.openingStockByFY||{}),[stockOpeningFY]:{...row,rate:Number(event.target.value)}}};
+                    })}/>
+                </label>
+              </>}
               <label>
                 Last Purchase Price
                 <input type="number" value={Number(form.lastPurchasePrice || 0)} readOnly />

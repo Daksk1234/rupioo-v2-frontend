@@ -46,6 +46,7 @@ import BankAccountPage from "./BankAccountPage.jsx";
 import BankTransactionPage from "./BankTransactionPage.jsx";
 import CashbookPage from "./CashbookPage.jsx";
 import CashierPage from "./CashierPage.jsx";
+import ChequeControlPage from "./ChequeControlPage.jsx";
 import BranchManagementPage from "./BranchManagementPage.jsx";
 import FormLibraryPage from "./FormLibraryPage.jsx";
 import LegacyMigrationPage from "./LegacyMigrationPage.jsx";
@@ -118,6 +119,7 @@ export default function ModulePage({page}){
  if(page.path==="/dms/receipts")return <ReceiptManagementPage/>;
  if(page.path==="/dms/payments")return <FinancialEntryPage type="payments"/>;
  if(page.path==="/dms/banking")return <BankTransactionPage/>;
+ if(page.path==="/dms/cheque-control")return <ChequeControlPage/>;
  if(page.path==="/dms/expenses")return <FinancialEntryPage type="expenses"/>;
  if(page.path==="/dms/ledger")return <LedgerPage page={page}/>;
  if(reportLikePaths.has(page.path))return <LiveReportPage page={page}/>;

@@ -463,6 +463,7 @@ export const nav = {
       items: [
         p("/dms/banking", "BANK", Landmark, "Bank statement, bank receipts and payments", "bank-transactions"),
         p("/dms/cashbook", "CASH", Banknote, "Cash-only receipts and payments with running balance", "cashbook"),
+        p("/dms/cheque-control", "Cheque Controlling System", ReceiptIndianRupee, "Company Issued and Company Received cheques", "cheque-control"),
         p("/dms/ledger", "Ledger", BookOpenCheck, "Party and account ledgers"),
         p("/dms/bank-accounts", "Bank Accounts", Landmark, "Bank accounts and FY opening balances", "bank-accounts"),
         p("/dms/cashier", "Cashier", HandCoins, "Cashier handover, count and closing", "cashier"),

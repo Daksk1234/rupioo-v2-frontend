@@ -63,6 +63,10 @@ export default function SuperadminProfilePage() {
       const result = await api("/profile");
       setData(result);
       const company = result.company || {};
+      const detection=result.financialYearDiscovery||{};
+      const savedYears=Array.isArray(company.financialYears)?company.financialYears:[];
+      const allYears=[...new Set([...savedYears,...(detection.discovered||[])])].filter(Boolean).sort();
+      const firstExisting=detection.firstDataFinancialYear||allYears[0]||company.financialYear||'';
       const user = result.user || {};
       setForm({
         gstin: company.gstin || user.tenantKey || "",
@@ -84,8 +88,8 @@ export default function SuperadminProfilePage() {
         gstTaxpayerType: company.gstVerification?.taxpayerType || "",
         gstConstitution: company.gstVerification?.constitution || "",
         financialYear: company.financialYear || "",
-        financialYears: Array.isArray(company.financialYears) ? company.financialYears : [],
-        firstCashFinancialYear: company.firstCashFinancialYear || [...(company.financialYears||[])].sort()[0] || company.financialYear || "",
+        financialYears: allYears,
+        firstCashFinancialYear: firstExisting || company.firstCashFinancialYear || '', 
         firstCashOpeningBalance: company.firstCashOpeningBalance ?? 0,
         salesInvoicePrefix: company.salesInvoicePrefix || "",
         salesInvoiceSuffix: company.salesInvoiceSuffix || "",
@@ -635,11 +639,20 @@ export default function SuperadminProfilePage() {
               <label className="wideField">Invoice Terms & Conditions<textarea value={form.invoiceTerms || ""} onChange={e => setForm({...form,invoiceTerms:e.target.value})}/></label>
             </div>
             <div className="formGrid compactGrid">
-              <label>First Financial Year for Cash Opening<select value={form.firstCashFinancialYear||""} onChange={e=>setForm({...form,firstCashFinancialYear:e.target.value})}>{[...(form.financialYears||[])].filter(Boolean).sort().slice(0,1).map(y=><option key={y} value={y}>{y}</option>)}{!(form.financialYears||[]).length&&<option value={form.firstCashFinancialYear||form.financialYear}>{form.firstCashFinancialYear||form.financialYear}</option>}</select></label>
+              <label>First Financial Year for Cash Opening
+                <select value={form.firstCashFinancialYear||""} onChange={e=>setForm({...form,firstCashFinancialYear:e.target.value})}>
+                  {[...new Set([...(form.financialYears||[]),form.firstCashFinancialYear].filter(Boolean))].sort().map(y=><option key={y} value={y}>{y}</option>)}
+                </select>
+                <small>Existing database years are detected automatically. Enter opening cash for the earliest year with data; later years carry forward.</small>
+              </label>
               <label>First-Year Cash Opening Balance (₹)<input type="number" min="0" step="0.01" value={form.firstCashOpeningBalance??0} onChange={e=>setForm({...form,firstCashOpeningBalance:e.target.value})}/></label>
             </div>
+            {data?.financialYearDiscovery?.firstDataFinancialYear && company.firstCashFinancialYear &&
+              data.financialYearDiscovery.firstDataFinancialYear < company.firstCashFinancialYear &&
+              <div className="resultBanner bad">Older financial data was detected in {data.financialYearDiscovery.firstDataFinancialYear}. Set the Cash opening for this year; review the amount before saving. Bank, user/ledger and product openings remain editable in their respective master pages.</div>}
             <div className="profileFyEditor">
               <div className="sectionHeader"><h3>Financial Years</h3><button className="btn ghost" onClick={addYear}>Add Year</button></div>
+              <small>Financial years already containing transactions or opening balances are included automatically and cannot be removed from company history.</small>
               {(form.financialYears || []).map((year,index)=><div className="profileFyRow" key={`${index}-${year}`}><input value={year} placeholder="2026-27" onChange={e=>updateYear(index,e.target.value)}/><label><input type="radio" name="default-fy" checked={form.financialYear===year} onChange={()=>setForm({...form,financialYear:year})}/> Default</label><button onClick={()=>removeYear(index)}><X size={14}/></button></div>)}
             </div>
             <div className="formActions"><button className="btn ghost" onClick={() => setEditing(false)}>Cancel</button><button className="btn primary" onClick={saveProfile}><Save size={15}/>Save Changes</button></div>

@@ -35,8 +35,12 @@ const blankServiceArea = () => ({
 const blank = () => ({
   name: "",
   gstin: "",
+  address: "",
+  contactPerson: "",
+  mobile: "",
+  cityGroups: [],
   baseStation: "",
-  serviceAreas: [blankServiceArea()],
+  serviceAreas: [],
   status: "ACTIVE",
   globalTransporterId: "",
 });
@@ -60,14 +64,7 @@ const blankFromLookup = () => {
   return {
     ...blank(),
     baseStation: ctx.city || "",
-    serviceAreas: [
-      {
-        ...blankServiceArea(),
-        pincode,
-        city: ctx.city || "",
-        state: ctx.state || "",
-      },
-    ],
+    serviceAreas: pincode ? [{...blankServiceArea(),pincode,city:ctx.city||"",state:ctx.state||""}] : [],
   };
 };
 
@@ -106,6 +103,13 @@ function serviceAreasFromRow(row = {}, stations = []) {
   }));
 }
 
+function groupCities(areas=[]){
+ const found=new Map();for(const area of areas){const pin=cleanPincode(area.pincode);if(pin.length!==6)continue;
+  const key=`${String(area.city||"").toLowerCase()}|${String(area.state||"").toLowerCase()}`;
+  if(!found.has(key))found.set(key,{city:area.city||"",state:area.state||"",district:"",pincodes:[]});
+  const entry=found.get(key);if(!entry.pincodes.includes(pin))entry.pincodes.push(pin);
+ }return [...found.values()];
+}
 export default function TransporterPage() {
   const [rows, setRows] = useState([]);
   const [show, setShow] = useState(false);
@@ -116,6 +120,10 @@ export default function TransporterPage() {
   const [page, setPage] = useState(1);
   const [meta, setMeta] = useState({ page: 1, pages: 1, total: 0 });
   const [gstBusy, setGstBusy] = useState(false);
+  const [cityQuery,setCityQuery]=useState("");
+  const [cityOptions,setCityOptions]=useState([]);
+  const [selectedCity,setSelectedCity]=useState("");
+  const [cityBusy,setCityBusy]=useState(false);
   const [saving, setSaving] = useState(false);
   const [companyBase, setCompanyBase] = useState({ pincode: "", city: "", state: "" });
 
@@ -138,6 +146,7 @@ export default function TransporterPage() {
   const open = async (row = null) => {
     setEdit(row || null);
     setMsg("");
+    setCityQuery("");setCityOptions([]);setSelectedCity("");
 
     if (!row) {
       const next = isLookupCreate() ? blankFromLookup() : blank();
@@ -155,11 +164,13 @@ export default function TransporterPage() {
       ...blank(),
       name: row.name || "",
       gstin: row.gstin || "",
+      address: row.address || "",contactPerson:row.contactPerson||"",mobile:row.mobile||"",
+      cityGroups:groupCities(serviceAreasFromRow(row,stations)),
       baseStation:
         [companyBase.city, companyBase.pincode].filter(Boolean).join(" - ") ||
         row.baseStation ||
         [primaryStation.city || primaryStation.name, primaryStation.pincode].filter(Boolean).join(" - "),
-      serviceAreas: serviceAreasFromRow(row, stations),
+      serviceAreas: [],
       status: row.status || "ACTIVE",
       globalTransporterId: row.globalTransporterId || "",
     });
@@ -287,25 +298,44 @@ export default function TransporterPage() {
     if (pincode.length === 6) lookupPincode(index, pincode);
   };
 
+  const searchCities=async()=>{
+    if(cityQuery.trim().length<2){setMsg("Type at least two city letters");return;}
+    setCityBusy(true);setMsg("");
+    try{const d=await api(`/operations/transporters/service-cities?q=${encodeURIComponent(cityQuery.trim())}`);
+      setCityOptions(d.items||[]);setSelectedCity("");if(!(d.items||[]).length)setMsg("No matching city found in Global PIN Master");
+    }catch(e){setMsg(e.message)}finally{setCityBusy(false)}
+  };
+  const addCity=async()=>{
+    const option=cityOptions[Number(selectedCity)];if(!option){setMsg("Choose a city from search results");return;}
+    setCityBusy(true);setMsg("");
+    try{const result=await api("/operations/transporters/service-city-pincodes",{method:"POST",body:JSON.stringify(option)});
+      setForm(f=>{
+        const exists=(f.cityGroups||[]).some(c=>c.city===option.city&&c.state===option.state&&c.district===option.district);
+        return exists?f:{...f,cityGroups:[...(f.cityGroups||[]),{...option,pincodes:result.pincodes||[]}]};
+      });
+      setMsg(`Added ${result.count} PIN codes for ${option.city}, ${option.state}`);
+      setCityQuery("");setCityOptions([]);setSelectedCity("");
+    }catch(e){setMsg(e.message)}finally{setCityBusy(false)}
+  };
+  const removeCity=index=>setForm(f=>({...f,cityGroups:(f.cityGroups||[]).filter((_,i)=>i!==index)}));
+
   const save = async () => {
     try {
       if (!form.name.trim()) throw new Error("Transporter name is required");
       if (companyBase.pincode.length !== 6 || !companyBase.city)
         throw new Error("Set the Superadmin / Company pincode and city in Company Profile first");
 
-      const serviceAreas = form.serviceAreas
-        .map((area) => ({
-          pincode: cleanPincode(area.pincode),
-          city: String(area.city || "").trim(),
-          state: String(area.state || "").trim(),
-        }))
-        .filter((area) => area.pincode || area.city);
+      const serviceAreas = [
+        ...(form.serviceAreas||[]).map(area=>({pincode:cleanPincode(area.pincode),city:String(area.city||"").trim(),state:String(area.state||"").trim()})),
+        ...(form.cityGroups||[]).flatMap(group=>(group.pincodes||[]).map(pin=>({pincode:cleanPincode(pin),city:group.city||"",state:group.state||""}))),
+      ].filter(area=>area.pincode);
+      const uniqueServiceAreas=[...new Map(serviceAreas.map(a=>[a.pincode,a])).values()];
 
-      if (!serviceAreas.length) {
+      if (!uniqueServiceAreas.length) {
         throw new Error("Add at least one service pincode");
       }
 
-      for (const area of serviceAreas) {
+      for (const area of uniqueServiceAreas) {
         if (area.pincode.length !== 6) {
           throw new Error("Every service pincode must contain 6 digits");
         }
@@ -314,17 +344,12 @@ export default function TransporterPage() {
         }
       }
 
-      const duplicatePin = serviceAreas.find(
-        (area, index) =>
-          serviceAreas.findIndex((other) => other.pincode === area.pincode) !== index,
-      );
-      if (duplicatePin) {
-        throw new Error(`Pincode ${duplicatePin.pincode} is already added`);
-      }
+      
 
       const payload = {
         name: form.name.trim(),
         gstin: cleanGstin(form.gstin),
+        address:form.address.trim(),contactPerson:form.contactPerson.trim(),mobile:form.mobile.trim(),
         globalTransporterId: form.globalTransporterId || undefined,
         status: form.status || "ACTIVE",
         stations: [
@@ -335,9 +360,9 @@ export default function TransporterPage() {
             pincode: companyBase.pincode,
             city: companyBase.city,
             state: companyBase.state,
-            servicePincodes: serviceAreas.map((area) => area.pincode),
-            serviceCities: serviceAreas.map((area) => area.city),
-            serviceStates: serviceAreas.map((area) => area.state),
+            servicePincodes: uniqueServiceAreas.map((area) => area.pincode),
+            serviceCities: uniqueServiceAreas.map((area) => area.city),
+            serviceStates: uniqueServiceAreas.map((area) => area.state),
             contacts: [],
           },
         ],
@@ -409,10 +434,10 @@ export default function TransporterPage() {
     },
     {
       key: "servicePincodes",
-      label: "Service Pincode",
+      label: "Service Pincodes",
       render: (row) =>
         Array.isArray(row.servicePincodes) && row.servicePincodes.length
-          ? row.servicePincodes.join(", ")
+          ? `${row.servicePincodes.length} PIN codes`
           : "—",
     },
     {
@@ -476,6 +501,9 @@ export default function TransporterPage() {
               </div>
             </label>
 
+            <label>Address<input value={form.address} onChange={e=>setForm(f=>({...f,address:e.target.value}))} placeholder="Transporter office address"/></label>
+            <label>Contact Person<input value={form.contactPerson} onChange={e=>setForm(f=>({...f,contactPerson:e.target.value}))} placeholder="Contact person name"/></label>
+            <label>Contact No.<input value={form.mobile} onChange={e=>setForm(f=>({...f,mobile:e.target.value}))} placeholder="Mobile / phone"/></label>
             <label>
               Base Station (Auto)
               <input
@@ -487,72 +515,27 @@ export default function TransporterPage() {
             </label>
           </div>
 
-          <div className="sectionLabel" style={{ marginTop: 16 }}>
-            <MapPin size={15} /> Service Pincodes
+          <div className="sectionLabel" style={{ marginTop:16 }}><MapPin size={15}/> Service Cities — automatic Global PIN coverage</div>
+          <div className="toolbar" style={{marginTop:10}}>
+            <input style={{minWidth:190}} placeholder="Search city, e.g. Guwahati" value={cityQuery} onChange={e=>setCityQuery(e.target.value)} onKeyDown={e=>e.key==="Enter"&&searchCities()}/>
+            <button type="button" className="btn ghost" disabled={cityBusy} onClick={searchCities}><Search size={15}/> Search City</button>
+            <select value={selectedCity} onChange={e=>setSelectedCity(e.target.value)} style={{minWidth:230}}>
+              <option value="">Select city / district / state</option>
+              {cityOptions.map((c,i)=><option key={`${c.city}|${c.district}|${c.state}`} value={i}>{c.city} — {c.district}, {c.state} ({c.count} PINs)</option>)}
+            </select>
+            <button type="button" className="btn primary" disabled={cityBusy||selectedCity===""} onClick={addCity}><Plus size={15}/> Add More City</button>
           </div>
-
-          <div
-            style={{
-              display: "flex",
-              alignItems: "flex-end",
-              gap: 10,
-              flexWrap: "wrap",
-              marginTop: 10,
-            }}
-          >
-            {form.serviceAreas.map((area, index) => (
-              <div
-                key={index}
-                className="subCard"
-                style={{
-                  display: "flex",
-                  alignItems: "flex-end",
-                  gap: 8,
-                  margin: 0,
-                  padding: 10,
-                }}
-              >
-                <label style={{ minWidth: 130 }}>
-                  Service Pincode {index + 1}
-                  <input
-                    value={area.pincode}
-                    maxLength={6}
-                    inputMode="numeric"
-                    onChange={(e) => changeServicePincode(index, e.target.value)}
-                    placeholder="781001"
-                    style={{ width: 130 }}
-                  />
-                </label>
-
-                <label style={{ minWidth: 180 }}>
-                  City Name
-                  <div className="lookupSelectRow">
-                    <input
-                      value={area.city}
-                      readOnly
-                      placeholder={area.loading ? "Fetching…" : "Auto fetch"}
-                      style={{ width: 180 }}
-                    />
-                    {area.loading && <span>...</span>}
-                  </div>
-                </label>
-
-                {form.serviceAreas.length > 1 && (
-                  <button
-                    type="button"
-                    className="iconBtn danger"
-                    title="Remove pincode"
-                    onClick={() => removeServiceArea(index)}
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                )}
-              </div>
-            ))}
-
-            <button type="button" className="btn ghost" onClick={addServiceArea}>
-              <Plus size={15} /> Add More
-            </button>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:12}}>
+            {(form.cityGroups||[]).map((group,index)=><div className="subCard" key={`${group.city}|${group.state}|${index}`} style={{margin:0,padding:10,minWidth:200}}>
+              <strong>{group.city}, {group.state}</strong><small style={{display:"block"}}>{group.district||""} • {(group.pincodes||[]).length} PIN codes automatically included</small>
+              <details><summary>View PIN codes</summary><small style={{maxWidth:300,display:"block",overflowWrap:"anywhere"}}>{(group.pincodes||[]).join(", ")}</small></details>
+              <button className="iconBtn danger" type="button" title="Remove City" onClick={()=>removeCity(index)}><Trash2 size={14}/></button>
+            </div>)}
+            {form.serviceAreas.length>0&&<div className="subCard" style={{padding:10,margin:0}}>
+              <strong>Existing individual PINs: {form.serviceAreas.length}</strong>
+              <small>Included along with selected cities</small>
+              <button className="btn ghost" type="button" onClick={()=>setForm(f=>({...f,serviceAreas:[]}))}>Clear individual PINs</button>
+            </div>}
           </div>
 
           <div className="formActions">

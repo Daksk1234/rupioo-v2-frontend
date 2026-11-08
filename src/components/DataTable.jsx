@@ -69,9 +69,9 @@ export default function DataTable({
             {smartColumns.map((column, columnIndex) => (
               <th
                 key={column.key}
-                title={column.label}
+                title={typeof column.label === "string" ? column.label : undefined}
                 className={`${column.className || ""} ${stickyFirstColumn && columnIndex===0?"stickyPrimaryCell":""}`.trim()}
-              >{column.label}</th>
+              >{column.headerContent ?? column.label}</th>
             ))}
           </tr>
         </thead>

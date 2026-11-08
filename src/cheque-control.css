@@ -1,0 +1,108 @@
+.chequePage{display:flex;flex-direction:column;gap:10px;width:100%;min-width:0}
+.chequeTopbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.chequeTabs{display:flex;gap:2px;border:1px solid var(--border,#d9dee6);border-radius:9px;padding:3px}
+.chequeTabs button{border:0;background:transparent;padding:8px 15px;border-radius:7px;cursor:pointer;font:inherit;font-size:13px}
+.chequeTabs button.active{background:var(--accent,#4d56c7);color:#fff;font-weight:600}
+.chequeActions{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.chequeActions select,.chequeSearch input,.chequeField input,.chequeField select{border:1px solid var(--border,#d9dee6);border-radius:7px;padding:8px 10px;font:inherit;background:var(--panel,#fff);color:inherit;max-width:100%}
+.chequeActions select{max-width:210px}
+.chequeSearch{display:flex;align-items:center;gap:5px;border:1px solid var(--border,#d9dee6);border-radius:7px;padding:0 7px}
+.chequeSearch input{border:0;outline:0;width:160px}
+.chequeContent{padding:10px!important;min-width:0}
+.chequeSummary{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:8px 4px;color:var(--text-secondary,#64748b);font-size:12px}
+.chequeSummary span{display:inline-flex;align-items:center;gap:5px}
+.chequeTable{border-collapse:collapse;width:100%;min-width:1400px;table-layout:fixed;font-size:13px}
+.chequeTable th,.chequeTable td{padding:10px 9px;border-bottom:1px solid var(--border,#e5e7eb);text-align:center;overflow:hidden;vertical-align:middle}
+.chequeTable th{font-size:12px;font-weight:700;white-space:normal;line-height:1.3;overflow-wrap:break-word}
+.chequeTable td small{display:block;color:var(--text-secondary,#64748b);font-size:11px;margin-top:3px}
+.chequeTable .amount{font-variant-numeric:tabular-nums;font-weight:600}
+.chequeStatus{font-size:11px;border-radius:6px;padding:5px 8px;background:var(--surface-secondary,#eef2f7);font-weight:600}
+.chequeStatus.cleared{background:#dcfce7;color:#14532d}
+.chequeEmpty{text-align:center!important;padding:30px!important;color:var(--text-secondary,#64748b)}
+.chequeFooter{display:flex;align-items:center;justify-content:space-between;padding:10px 3px;font-size:12px}
+.chequeFooter>div{display:flex;gap:8px}
+.chequeModal{width:min(730px,95vw);max-height:90vh;overflow:auto;padding:20px!important}
+.chequeModalTitle,.chequeModalButtons{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.chequeModalTitle{margin-bottom:18px}
+.chequeFields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.chequeField{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600}
+.chequeField input,.chequeField select{width:100%;font-size:13px;font-weight:400}
+.chequeHint{font-size:12px;color:var(--text-secondary,#64748b);margin:14px 0}
+.chequeModalButtons{justify-content:flex-end}
+@media(max-width:620px){.chequeFields{grid-template-columns:1fr}.chequeTopbar{align-items:stretch}.chequeActions{width:100%}}
+
+/* Dedicated Issue Cheque full-page form (not a modal or cheque-number picker). */
+.chequeIssuePage{max-width:1000px;margin:0 auto}
+.chequeIssueHead{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.chequeIssueHead strong{font-size:17px}
+.chequeIssueHead>span{margin-left:auto;font-size:12px;color:var(--text-secondary,#64748b)}
+.chequeIssuePanel{padding:18px!important}
+.chequeIssueIntro{display:flex;align-items:flex-start;gap:10px;margin-bottom:18px;font-size:13px;color:var(--text-secondary,#64748b)}
+.chequeIssueIntro svg{flex:none;color:var(--accent,#4d56c7)}
+.chequeReadOnly{background:var(--surface-secondary,#f1f5f9)!important;font-weight:700!important;cursor:not-allowed}
+.chequeMissingPanel{border:1px solid var(--border,#d9dee6)!important}
+.chequeMissingPanel .chequeIssueIntro svg{color:#b45309}
+.chequeDanger{color:#b45309!important;border:1px solid #e4ad72!important}
+.chequeIssuePage .resultBanner{display:flex;align-items:center;gap:8px}
+
+/* Cheque register: stable nine-column grid in both tabs.
+   Long party/bank details never expand a column when edited or loaded. */
+.chequeTableWrap{width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain}
+.chequeTable col{box-sizing:border-box}
+.chequeTable td{white-space:normal;overflow-wrap:anywhere}
+.chequeTable .chequeCellTruncate{display:block;max-width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chequeTable .chequeDateCell{white-space:nowrap;font-variant-numeric:tabular-nums;overflow-wrap:normal}
+.chequeTable .chequeAmountCell{white-space:nowrap;font-variant-numeric:tabular-nums}
+.chequeTable .chequeActionCell{white-space:nowrap;padding-left:3px;padding-right:3px}
+.chequeTable .chequeStatus{display:inline-block;max-width:100%;white-space:nowrap;box-sizing:border-box}
+@media(max-width:900px){.chequeTableWrap{scrollbar-width:thin}}
+
+/* Company Received: fixed 12-column register; no shift when party/IFSC changes. */
+.chequeTable--received{min-width:1740px;table-layout:fixed}
+.chequeTable--received th,.chequeTable--received td{box-sizing:border-box}
+.chequeTable--received .chequeStatus{white-space:normal;overflow-wrap:anywhere;line-height:1.3}
+.chequeBankLookup{display:flex;flex-direction:column;gap:6px;grid-column:span 2;padding:11px 14px;border:1px solid var(--border,#d9dee6);border-radius:8px;background:var(--surface-secondary,#f6f8fb);font-size:12px;color:var(--text-secondary,#64748b)}
+.chequeBankLookup strong{color:var(--text,#111827);font-size:12px}
+.chequeBankLookup small{display:block;line-height:1.5;margin-top:4px}
+.chequeBankLookup .chequeError{color:#b91c1c}
+@media(max-width:620px){.chequeBankLookup{grid-column:span 1}}
+
+/* Master-linked Debtor / Creditor selector, shared by issued and received forms. */
+.chequePartyPicker{display:flex;flex-direction:column;gap:6px;min-width:0}
+.chequePartyPicker input,.chequePartyPicker select{width:100%;min-width:0;border:1px solid var(--border,#d9dee6);border-radius:7px;padding:8px 10px;font:inherit;background:var(--panel,#fff);color:inherit;font-size:13px;font-weight:400}
+.chequePartyPicker select{cursor:pointer}
+.chequePartyFooter{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:18px;font-size:11px;font-weight:400;color:var(--text-secondary,#64748b)}
+.chequePartyFooter button{padding:2px 7px!important;font-size:11px!important;white-space:nowrap}
+.chequePartyFooter .chequeError{color:#b91c1c}
+.chequePartyHint{font-size:12px;line-height:1.5;color:var(--text-secondary,#64748b);align-self:center}
+
+/* Auto-filled SBI received-cheque deposit slip workspace. */
+.chequeSlipTop{display:flex;align-items:center;flex-wrap:wrap;gap:14px}
+.chequeSlipTop strong{display:inline-flex;align-items:center;gap:8px;font-size:16px}
+.chequeSlipTop>span{color:var(--text-secondary,#64748b);font-size:12px;margin-left:auto}
+.chequeSlipPanel{padding:14px!important;min-width:0}
+.chequeSlipControls{display:flex;align-items:end;gap:12px;flex-wrap:wrap}
+.chequeSlipControls label{display:flex;flex-direction:column;gap:5px;min-width:180px;font-size:12px;font-weight:600}
+.chequeSlipControls select,.chequeSlipControls input{border:1px solid var(--border,#d9dee6);border-radius:7px;min-height:37px;padding:7px 10px;background:var(--panel,#fff);color:inherit;font:inherit;font-weight:400}
+.chequeSlipNote{font-size:12px;color:var(--text-secondary,#64748b);line-height:1.6}
+.chequeSlipSummary{display:flex;gap:12px;flex-wrap:wrap;padding:10px 0;font-size:12px}
+.chequeSlipSummary span{border:1px solid var(--border,#d9dee6);border-radius:7px;padding:9px 12px;display:flex;gap:8px}
+.chequeSlipTableWrap{overflow-x:auto;max-width:100%}
+.chequeSlipTable{width:100%;min-width:980px;border-collapse:collapse;table-layout:fixed;font-size:12px}
+.chequeSlipTable th,.chequeSlipTable td{padding:10px 8px;border-bottom:1px solid var(--border,#e5e7eb);text-align:center;vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
+.chequeSlipTable th:nth-child(1){width:40px}
+.chequeSlipTable th:nth-child(2){width:125px}
+.chequeSlipTable th:nth-child(3){width:160px}
+.chequeSlipTable th:nth-child(4),.chequeSlipTable th:nth-child(5){width:110px}
+.chequeSlipTable th:nth-child(6){width:180px}
+.chequeSlipTable th:nth-child(7){width:120px}
+.chequeSlipTable th:nth-child(8){width:120px}
+.chequeSlipTable small{display:block;font-size:11px;color:var(--text-secondary,#64748b)}
+.chequeSlipTable .number{font-variant-numeric:tabular-nums;font-weight:600}
+.chequeSlipEmpty{text-align:center;color:var(--text-secondary,#64748b);padding:26px}
+.chequeSlipButtons{display:flex;justify-content:flex-end;align-items:center;gap:10px;flex-wrap:wrap;margin-top:15px}
+.chequeSlipButtons>span{font-size:12px;color:var(--text-secondary,#64748b);flex:1;min-width:230px}
+.chequeSlipButtons a.btn{display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+.chequeSlipPreview{margin-top:18px;border:1px solid var(--border,#d9dee6);border-radius:8px;overflow:hidden}
+.chequeSlipPreview>div{padding:8px 12px;font-size:12px;background:var(--surface-secondary,#f1f5f9)}
+.chequeSlipPreview iframe{display:block;width:100%;height:min(72vh,670px);border:0;background:#f8fafc}

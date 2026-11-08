@@ -123,7 +123,12 @@ export default function ColumnStudio({ routeKey = "" }) {
         if (!entry) {
           const slot = document.createElement("div");
           slot.className = "v2ColumnStudioSlot";
-          table.parentElement?.insertBefore(slot, table);
+          // Keep the Bank editor beside its opening/debit/credit totals.
+          // Other pages retain the existing placement above the table.
+          const bankAnchor = routeKey === "/dms/banking"
+            ? host.querySelector('[data-bank-column-editor-anchor="true"]') : null;
+          if (bankAnchor && table.closest(".transactionLedgerPanel")) bankAnchor.appendChild(slot);
+          else table.parentElement?.insertBefore(slot, table);
           const root = createRoot(slot);
           const saved = load(persistKey);
           const available = new Set(columns.map((col) => col.key));

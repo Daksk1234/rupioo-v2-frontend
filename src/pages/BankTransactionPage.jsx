@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
@@ -11,13 +11,18 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  Pencil,
   Upload,
   X,
 } from "lucide-react";
 import PageHeader from "../components/PageHeader.jsx";
 import DataTable from "../components/DataTable.jsx";
+import BookMonthAccordion from "../components/BookMonthAccordion.jsx";
 import EditMasterLink from "../components/EditMasterLink.jsx";
 import { api, getUser } from "../lib/api.js";
+import { mayEditPostedVoucher, mayDeletePostedVoucher } from "../lib/voucherEditPermissions.js";
+import {isBookSuperadmin,bookCorrectionSourceKey,deleteBookRow} from '../lib/superadminBookCorrection.js';
+import { useBankCashColumnEditor } from "../lib/useBankCashColumnEditor.jsx";
 import {
   fetchTransactionParties,
   partyOptionLabel,
@@ -29,6 +34,7 @@ import {
 import "../profile-bank.css";
 import "../transaction-books.css";
 import { exportTransactionList } from "../lib/transactionExport.js";
+import { fetchCompanyBankAccounts } from "../lib/companyBankOptions.js";
 import {
   fetchAccountPaths,
   accountPathHeaders,
@@ -81,6 +87,8 @@ const monthBounds = (fy, monthName) => {
   );
   return { fromDate: `${year}-${mm}-01`, toDate: `${year}-${mm}-${last}` };
 };
+// Bank statement view: credit=inflow, debit=outflow. Positive balance is Cr;
+// negative balance is Dr (overdraft). This does NOT change journal Dr/Cr.
 const bankBalance = (v) =>
   `${money(Math.abs(Number(v || 0)))} ${Number(v || 0) < 0 ? "Dr" : "Cr"}`;
 // Treat statement dates as calendar days. Never convert them through the
@@ -132,15 +140,20 @@ export default function BankTransactionPage({ statementPage = false }) {
   const navigate = useNavigate();
   const location = useLocation();
   const user = getUser();
+  const superadmin=isBookSuperadmin(user);
   const selectedFy = currentFinancialYear();
   const years = financialYearOptions(user, { count: 10 });
   const [fy, setFy] = useState(selectedFy);
-  const [selectedMonth, setSelectedMonth] = useState("ALL"),
-    [monthReady, setMonthReady] = useState(false),
-    [initialMonthSearch, setInitialMonthSearch] = useState(true);
+  const [openMonth, setOpenMonth] = useState("");
+  const [monthSummaries, setMonthSummaries] = useState([]);
+  const [summaryBusy, setSummaryBusy] = useState(false);
+  const [detailBusy, setDetailBusy] = useState(false);
+  const [submittedQ, setSubmittedQ] = useState("");
+  const detailSeq=useRef(0), summarySeq=useRef(0);
   const [banks, setBanks] = useState([]),
     [parties, setParties] = useState([]),
     [rows, setRows] = useState([]),
+    [totals, setTotals] = useState({ debit: 0, credit: 0, possiblyTruncated: false }),
     [meta, setMeta] = useState({ page: 1, pages: 1, total: 0 });
   const [bankFilter, setBankFilter] = useState(""),
     [typeFilter, setTypeFilter] = useState("ALL"),
@@ -158,12 +171,15 @@ export default function BankTransactionPage({ statementPage = false }) {
   const [msg, setMsg] = useState(""),
     [error, setError] = useState("");
 
+  const inline = useBankCashColumnEditor({channel: "bank", user, rows, financialYear: fy,
+    onSaved: () => refreshBooks(), setError, setMessage: setMsg});
+
+  // Never carry an unsaved correction over to another bank/FY/filter.
+  useEffect(() => { inline.cancel(); }, [fy, bankFilter, typeFilter, submittedQ]);
+
   const loadBanks = () =>
-    api(
-      `/banks?status=ACTIVE&financialYear=${encodeURIComponent(fy)}&page=1&limit=200`,
-    )
-      .then((d) => {
-        const items = d.items || [];
+    fetchCompanyBankAccounts(fy)
+      .then((items) => {
         setBanks(items);
         const mainNumber = String(
           user?.companyProfile?.bankDetails?.accountNumber || "",
@@ -197,23 +213,23 @@ export default function BankTransactionPage({ statementPage = false }) {
       fetchAccountPaths().catch(() => new Map()),
     ])
       .then(([customers, users, accountPaths]) => {
-        const hasSystemCashCustomer = (customers || []).some(
-          (x) => String(x.systemKey || "").toUpperCase() === "CASH",
-        );
         const combined = [
-          ...(customers || []).map((x) => ({
-            ...x,
-            partyKind: "CUSTOMER",
-            partyRef: String(x.globalCustomerId || x._id || ""),
-          })),
+          ...(customers || [])
+            .filter((x) =>
+              String(x.systemKey || "").toUpperCase() !== "CASH" &&
+              String(x.accountingProfile?.systemAccountCode || "").toUpperCase() !== "SYS_CASH"
+            )
+            .map((x) => ({
+              ...x,
+              partyKind: "CUSTOMER",
+              partyRef: String(x.globalCustomerId || x._id || ""),
+            })),
           ...(users || [])
             .filter(
               (x) =>
                 x.ledgerNodeKind !== "GROUP" &&
-                !(
-                  hasSystemCashCustomer &&
-                  String(x.systemKey || "").toUpperCase() === "CASH"
-                ),
+                String(x.systemKey || "").toUpperCase() !== "CASH" &&
+                String(x.accountingProfile?.systemAccountCode || "").toUpperCase() !== "SYS_CASH",
             )
             .map((x) => ({
               ...x,
@@ -232,22 +248,39 @@ export default function BankTransactionPage({ statementPage = false }) {
         setParties(combined);
       })
       .catch(() => setParties([]));
-  const load = async (next = page) => {
-    if (!bankFilter) return;
+  const load = useCallback(async (next = 1) => {
+    if (!bankFilter || !openMonth) return;
+    const seq=++detailSeq.current;
+    setDetailBusy(true);
     try {
       setError("");
-      const { fromDate, toDate } = monthBounds(fy, selectedMonth);
-      const d = await api(
-        `/banks/transactions?financialYear=${encodeURIComponent(fy)}&fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}&bankAccountId=${encodeURIComponent(bankFilter)}&type=${encodeURIComponent(typeFilter)}&q=${encodeURIComponent(q)}&page=${next}&limit=50`,
-      );
+      const { fromDate, toDate } = monthBounds(fy, openMonth);
+      const d = await api(`/banks/transactions?financialYear=${encodeURIComponent(fy)}&fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}&bankAccountId=${encodeURIComponent(bankFilter)}&type=${encodeURIComponent(typeFilter)}&q=${encodeURIComponent(submittedQ)}&page=${next}&limit=50`);
+      if(seq!==detailSeq.current)return;
       setRows(d.items || []);
       setMeta(d.meta || { page: next, pages: 1, total: 0 });
       setPage(d.meta?.page || next);
       setSelected([]);
-    } catch (e) {
-      setError(apiErrorText(e));
-    }
-  };
+    } catch (e) {if(seq===detailSeq.current){setError(apiErrorText(e));setRows([]);}}
+    finally {if(seq===detailSeq.current)setDetailBusy(false);}
+  },[bankFilter,openMonth,fy,typeFilter,submittedQ]);
+  const loadSummary = useCallback(async () => {
+    if(!bankFilter)return;
+    const seq=++summarySeq.current;
+    setSummaryBusy(true);
+    try {
+      setError("");
+      const {fromDate,toDate}=monthBounds(fy,"ALL");
+      // The month headers are always the true FY account totals.
+      // Type and search filters apply only to the expanded transactions.
+      const d=await api(`/banks/transactions?financialYear=${encodeURIComponent(fy)}&fromDate=${fromDate}&toDate=${toDate}&bankAccountId=${encodeURIComponent(bankFilter)}&type=ALL&q=&page=1&limit=10&groupByMonth=1`);
+      if(seq!==summarySeq.current)return;
+      setMonthSummaries(d.monthlySummaries||[]);
+      setTotals(d.totals||{debit:0,credit:0,possiblyTruncated:false});
+    }catch(e){if(seq===summarySeq.current){setError(apiErrorText(e));setMonthSummaries([]);}}
+    finally{if(seq===summarySeq.current)setSummaryBusy(false);}
+  },[fy,bankFilter]);
+  const refreshBooks=async()=>{await loadSummary();if(openMonth)await load(1);};
   const toggleSelected = (id) =>
     setSelected((cur) =>
       cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id],
@@ -259,6 +292,27 @@ export default function BankTransactionPage({ statementPage = false }) {
         : cur.filter((x) => !ids.includes(x)),
     );
   const bulkDelete = async () => {
+    if(superadmin){
+      const chosen=rows.filter(r=>selected.includes(String(r._listId||r._id)));
+      if(!chosen.length)return setError('Select entries from the expanded month before deleting');
+      const reason=window.prompt(`Remove ${chosen.length} BANK transactions from the active book? Original records and a correction audit are retained.
+Reason:`);
+      if(reason===null)return;
+      if(reason.trim().length<5)return setError('Enter a reason of at least five characters');
+      setBusy(true);setError('');let completed=0;const failures=[];
+      for(const row of chosen){
+        try{await api('/transactions/book-corrections',{method:'POST',body:JSON.stringify({
+          book:'BANK',sourceKey:bookCorrectionSourceKey(row,'bank'),financialYear:fy,
+          date:String(row.date||'').slice(0,10),debit:0,credit:0,deleted:true,
+          remarks:row.remarks||'',partyName:row.matchedPartyName||'',reason:reason.trim(),
+        })});completed++;}
+        catch(e){failures.push(`${row.transactionId}: ${e.message}`);}
+      }
+      setBusy(false);setSelected([]);
+      setMsg(`${completed} BANK entries removed; audit and balanced correction saved.`);
+      if(failures.length)setError(failures.join(' | '));
+      await refreshBooks();return;
+    }
     if (!selected.length)
       return setError("Select at least one bank transaction");
     if (
@@ -275,7 +329,7 @@ export default function BankTransactionPage({ statementPage = false }) {
         body: JSON.stringify({ financialYear: fy, ids: selected }),
       });
       setMsg(`${d.deleted || 0} selected bank transaction(s) deleted`);
-      await load(1);
+      await refreshBooks();
     } catch (e) {
       setError(apiErrorText(e));
     } finally {
@@ -286,51 +340,16 @@ export default function BankTransactionPage({ statementPage = false }) {
     loadBanks();
     loadParties();
   }, [fy]);
-  useEffect(() => {
-    if (!bankFilter) {
-      setMonthReady(false);
-      return;
-    }
-    let active = true;
-    setMonthReady(false);
-    const fetchLatest = async () => {
-      try {
-        const d = await api(
-          `/banks/transactions/latest-month?financialYear=${encodeURIComponent(fy)}&bankAccountId=${encodeURIComponent(bankFilter)}`,
-        );
-        if (!active) return;
-        if (!d.month && initialMonthSearch) {
-          for (const oldFy of years.filter((x) => x < fy)) {
-            const prior = await api(
-              `/banks/transactions/latest-month?financialYear=${encodeURIComponent(oldFy)}&bankAccountId=${encodeURIComponent(bankFilter)}`,
-            );
-            if (!active) return;
-            if (prior.month) {
-              setInitialMonthSearch(false);
-              setFy(oldFy);
-              return;
-            }
-          }
-        }
-        setInitialMonthSearch(false);
-        setSelectedMonth(d.month ? monthNames[d.month - 1] : "ALL");
-        setMonthReady(true);
-      } catch (e) {
-        if (active) {
-          setSelectedMonth("ALL");
-          setError(e.message);
-          setMonthReady(true);
-        }
-      }
-    };
-    fetchLatest();
-    return () => {
-      active = false;
-    };
-  }, [fy, bankFilter]);
-  useEffect(() => {
-    if (monthReady && bankFilter) load(1);
-  }, [fy, selectedMonth, bankFilter, typeFilter, monthReady]);
+  useEffect(()=>{
+    detailSeq.current++;
+    setOpenMonth("");setRows([]);setSelected([]);
+    setMeta({page:1,pages:1,total:0});
+    loadSummary();
+  },[loadSummary]);
+  useEffect(()=>{
+    detailSeq.current++;
+    if(openMonth)load(1);
+  },[load]);
 
   const bankPartyOptions = useMemo(
     () =>
@@ -347,6 +366,7 @@ export default function BankTransactionPage({ statementPage = false }) {
     const m = new Map();
     for (const p of parties) m.set(partyRef(p), financePartyLabel(p));
     for (const b of bankPartyOptions) m.set(b.ref, b.label);
+    m.set("CASH:COMPANY", "Company Cash-in-Hand (Contra)");
     return m;
   }, [parties, bankPartyOptions]);
   const idByLabel = useMemo(() => {
@@ -354,6 +374,7 @@ export default function BankTransactionPage({ statementPage = false }) {
     for (const p of parties) m.set(financePartyLabel(p), partyRef(p));
     for (const b of bankPartyOptions) m.set(b.label, b.ref);
     m.set("Suspense Account", "SUSPENSE");
+    m.set("Company Cash-in-Hand (Contra)", "CASH:COMPANY");
     return m;
   }, [parties, bankPartyOptions]);
 
@@ -405,10 +426,6 @@ export default function BankTransactionPage({ statementPage = false }) {
         })),
       );
       if (d.financialYear) setFy(d.financialYear);
-      const firstStatementDate = dateInputValue((d.reviewRows || [])[0]?.date);
-      const firstMonthIndex = firstStatementDate ? Number(firstStatementDate.slice(5, 7)) - 1 : -1;
-      if (firstMonthIndex >= 0 && firstMonthIndex < 12)
-        setSelectedMonth(monthNames[firstMonthIndex]);
       const next = {};
       for (const r of d.reviewRows || [])
         next[r.rowNo] = {
@@ -560,7 +577,7 @@ export default function BankTransactionPage({ statementPage = false }) {
         },
       );
       setMsg(
-        `Statement submitted: ${d.postedRows || 0} transactions • ${d.unmatchedRows || 0} Suspense`,
+        `Statement submitted: ${d.postedRows || 0} transactions • ${d.postedReceipts ?? 0} receipts • ${d.postedPayments ?? 0} payments • ${d.unmatchedRows || 0} Suspense${d.errorRows ? ` • ${d.errorRows} rejected (see server errors)` : ""}`,
       );
       setShow(false);
       setPreview(null);
@@ -595,9 +612,22 @@ export default function BankTransactionPage({ statementPage = false }) {
     (b) => String(b.bankAccountId) === String(bankFilter),
   );
   const bankOpening = activeBank
-    ? Number(activeBank.fyOpeningBalance ?? activeBank.openingBalance ?? 0) *
-      (activeBank.fyOpeningBalanceType === "CR" ? -1 : 1)
+    ? Math.abs(Number(activeBank.fyOpeningBalance ?? activeBank.openingBalance ?? 0)) *
+      ((activeBank.fyOpeningBalanceType ?? activeBank.openingBalanceType) === "DR" ? -1 : 1)
     : 0;
+  const rebuildBankBalances = async () => {
+    if (!bankFilter) return setError("Select a bank account first");
+    if (!window.confirm(`Recalculate all BANK running balances for FY ${fy} from stored transactions? This does not change journals.`)) return;
+    setBusy(true); setError(""); setMsg("");
+    try {
+      const result = await api('/banks/transactions/rebuild-running', {
+        method: 'POST', body: JSON.stringify({financialYear:fy,bankAccountId:bankFilter}),
+      });
+      setMsg(`Rebuilt ${result.updated || 0} BANK running balances from Debit/Credit movements.`);
+      await refreshBooks();
+    } catch(e) {setError(e.message || 'Unable to rebuild balances');}
+    finally {setBusy(false);}
+  };
   const downloadStatement = async (format, printWindow) => {
     if (!bankFilter) return setError("Choose one bank account first");
     setError("");
@@ -605,13 +635,15 @@ export default function BankTransactionPage({ statementPage = false }) {
       const accountPaths = await fetchAccountPaths().catch(() => new Map());
       const all = [];
       const limit = 200;
-      const totalPages = Math.max(1, Math.ceil((meta.total || 0) / limit));
+      let totalPages = 1;
       for (let p = 1; p <= totalPages; p++) {
-        const { fromDate, toDate } = monthBounds(fy, selectedMonth);
+        if (p > 100) throw new Error("Export exceeds 20,000 transactions");
+        const { fromDate, toDate } = monthBounds(fy, "ALL");
         const d = await api(
           `/banks/transactions?financialYear=${encodeURIComponent(fy)}&fromDate=${fromDate}&toDate=${toDate}&bankAccountId=${encodeURIComponent(bankFilter)}&type=${encodeURIComponent(typeFilter)}&q=${encodeURIComponent(q)}&page=${p}&limit=${limit}`,
         );
         all.push(...(d.items || []));
+        totalPages = Math.max(1,Number(d.meta?.pages||1));
       }
       const heads = [
         "Date",
@@ -633,7 +665,7 @@ export default function BankTransactionPage({ statementPage = false }) {
           "",
           "",
           "",
-          `${money(Math.abs(bankOpening))} ${bankOpening < 0 ? "Cr" : "Dr"}`,
+          `${money(Math.abs(bankOpening))} ${bankOpening < 0 ? "Dr" : "Cr"}`,
         ],
         ...all.map((x) => [
           fmtDate(x.date),
@@ -650,7 +682,7 @@ export default function BankTransactionPage({ statementPage = false }) {
         format,
         heads,
         records,
-        `${fy}-${selectedMonth}-${activeBank?.accountNumber || ""}`,
+        `${fy}-Full-FY-${activeBank?.accountNumber || ""}`,
         printWindow,
       );
     } catch (e) {
@@ -658,12 +690,34 @@ export default function BankTransactionPage({ statementPage = false }) {
     }
   };
 
+  const deleteDirectBankVoucher=async(row,kind,id)=>{
+    const reason=window.prompt(`Delete ${row.transactionId || "this voucher"} from Bank Book? The voucher and journal will be voided, not physically erased.\nEnter reason (at least 5 characters):`);
+    if(reason===null)return;
+    if(reason.trim().length<5)return setError("Enter a deletion reason of at least 5 characters");
+    setBusy(true);setError("");
+    try{
+      await api(`/transactions/vouchers/${kind}/${encodeURIComponent(id)}/void`,{
+        method:"POST",body:JSON.stringify({financialYear:fy,reason:reason.trim()}),
+      });
+      setMsg(`${row.transactionId || "Voucher"} voided; bank balance recalculated`);
+      await refreshBooks();
+    }catch(e){setError(apiErrorText(e));}
+    finally{setBusy(false);}
+  };
+  const deleteSuperadminBankRow=async(row)=>{
+    setBusy(true);setError('');
+    try{const result=await deleteBookRow({row,channel:'bank',financialYear:fy});
+      if(!result.cancelled){setMsg('Removed from BANK book with balanced, audited correction.');await refreshBooks();}}
+    catch(e){setError(e.message);}finally{setBusy(false);}
+  };
   const columns = [
-    { key: "date", label: "Date", render: (r) => fmtDate(r.date) },
+    { key: "date", label: "Date", headerContent: inline.header("date", "Date"),
+      render: (r) => inline.cell(r, "date", fmtDate(r.date)) },
     {
       key: "matchedPartyName",
-      label: "Party",
+      label: "Party", headerContent: inline.header("party", "Party"),
       render: (r) => {
+        const display = (() => {
         const ref = String(r.matchedPartyGlobalId || "");
         if (!ref) return <span className="suspenseText">Suspense Account</span>;
         if (ref.startsWith("USER:"))
@@ -683,32 +737,61 @@ export default function BankTransactionPage({ statementPage = false }) {
             {r.partyNameDisplay || r.matchedPartyName || "—"}
           </EditMasterLink>
         );
+        })();
+        return inline.cell(r, "party", display);
       },
     },
     {
       key: "remarks",
-      label: "Remarks",
+      label: "Remarks", headerContent: inline.header("remarks", "Remarks"),
       width: 520,
-      render: (r) => (
-        <span className="financeRemarkCell">
-          {r.remarks || r.partyName || "—"}
-        </span>
-      ),
+      render: (r) => inline.cell(r, "remarks", <span className="financeRemarkCell">{r.remarks || r.partyName || "—"}</span>),
     },
     {
       key: "debit",
-      label: "Debit",
-      render: (r) => (Number(r.debit || 0) ? money(r.debit) : "—"),
+      label: "Debit", headerContent: inline.header("debit", "Debit"),
+      render: (r) => inline.cell(r, "debit", Number(r.debit || 0) ? money(r.debit) : "—"),
     },
     {
       key: "credit",
-      label: "Credit",
-      render: (r) => (Number(r.credit || 0) ? money(r.credit) : "—"),
+      label: "Credit", headerContent: inline.header("credit", "Credit"),
+      render: (r) => inline.cell(r, "credit", Number(r.credit || 0) ? money(r.credit) : "—"),
     },
     {
       key: "runningBalance",
       label: "Running Bal.",
       render: (r) => bankBalance(r.runningBalance),
+    },
+    {
+      key: "edit", label: "Edit", width: 76,
+      render: (r) => {
+        if(superadmin)return <button type="button" className="btn ghost" disabled={inline.editing||inline.loading}
+          aria-label={`Edit ${r.transactionId}`} title="Edit displayed BANK rows" onClick={inline.beginAll}><Pencil size={15}/></button>;
+        // Source-of-truth edits are supported for direct posted DMS vouchers.
+        // A submitted bank-statement row is not a direct voucher: changing it
+        // without reversing its imported journal would corrupt reconciliation.
+        const source=String(r._listId||"");
+        const match=/^(RCT|PAY):(.+)$/.exec(source);
+        if(!match || r._directVoucherEditable === false) return <span title="Imported statements, OTP receipts and contra entries must be corrected in their source workflow">—</span>;
+        const kind=match[1]==="RCT"?"receipts":"payments";
+        if(!mayEditPostedVoucher(user,kind,"bank"))return <span title="Edit Posted Voucher permission is not assigned">—</span>;
+        return <button type="button" className="btn ghost" aria-label={`Edit ${r.transactionId}`} title="Edit posted voucher" onClick={()=>navigate(`/dms/transactions/edit/${kind}/${encodeURIComponent(match[2])}?fy=${encodeURIComponent(fy)}&back=bank`)}><Pencil size={15}/></button>;
+      },
+    },
+    {
+      key: "delete", label: "Delete", width: 72,
+      render: (r) => {
+        if(superadmin)return <button type="button" className="btn ghost danger transactionBulkDeleteIcon"
+          disabled={busy} title="Remove from active BANK book (audited)" aria-label={`Delete ${r.transactionId}`}
+          onClick={()=>deleteSuperadminBankRow(r)}><Trash2 size={15}/></button>;
+        const match=/^(RCT|PAY):(.+)$/.exec(String(r._listId||""));
+        if(!match)return <span title="Imported statements and contra require their source workflow">—</span>;
+        const kind=match[1]==="RCT"?"receipts":"payments";
+        if(!mayDeletePostedVoucher(user,kind,"bank"))return "—";
+        return <button className="btn ghost danger transactionBulkDeleteIcon" disabled={busy}
+          aria-label={`Delete ${r.transactionId}`} title="Void direct voucher (audit retained)"
+          onClick={()=>deleteDirectBankVoucher(r,kind,match[2])}><Trash2 size={15}/></button>;
+      },
     },
   ];
 
@@ -723,7 +806,6 @@ export default function BankTransactionPage({ statementPage = false }) {
             <select
               value={fy}
               onChange={(e) => {
-                setInitialMonthSearch(false);
                 setFy(e.target.value);
               }}
             >
@@ -732,19 +814,9 @@ export default function BankTransactionPage({ statementPage = false }) {
               ))}
             </select>
             <select
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-            >
-              <option value="ALL">Full FY</option>
-              {fyMonthOrder.map((m) => (
-                <option key={m}>{m}</option>
-              ))}
-            </select>
-            <select
               aria-label="Bank Account"
               value={bankFilter}
               onChange={(e) => {
-                setInitialMonthSearch(false);
                 setBankFilter(e.target.value);
               }}
             >
@@ -769,14 +841,16 @@ export default function BankTransactionPage({ statementPage = false }) {
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && load(1)}
+                onKeyDown={(e) => e.key === "Enter" && setSubmittedQ(q)}
                 placeholder="Party, remarks, mode, voucher…"
               />
             </div>
-            <button className="btn ghost" onClick={() => load(1)}>
+            <button className="btn ghost" onClick={() => {setSubmittedQ(q);refreshBooks();}}>
               <RefreshCw size={15} />
               Refresh
             </button>
+            {(["MASTER","SUPERADMIN","COMPANY_ADMIN","DMS_ADMIN","ADMIN","ADMINISTRATOR"].includes(String(user?.role||"").toUpperCase())) &&
+              <button className="btn ghost" disabled={busy || !bankFilter} onClick={rebuildBankBalances} title="Recalculate historical bank balances, including balances saved by older versions">Rebuild Running Balances</button>}
             <select
               aria-label="Download Bank Transactions"
               value=""
@@ -807,7 +881,14 @@ export default function BankTransactionPage({ statementPage = false }) {
             >
               <span>+</span> Add Transaction
             </button>
-            <button
+            <button className="btn ghost" onClick={() => navigate("/dms/transactions/contra")}>Cash / Bank Contra</button>
+            {!inline.editing ? <button type="button" className="btn ghost" disabled={inline.loading || detailBusy || !rows.length}
+              onClick={inline.begin} title="Click the Date, Party, Remarks, Debit or Credit headings to select columns, then Edit">{inline.loading ? "Loading…" : `Edit Columns${inline.selectedColumns.length ? ` (${inline.selectedColumns.length})` : ''}`}</button>
+              : <>
+                <button type="button" className="btn primary" disabled={inline.loading} onClick={inline.save}>Save All Changes{inline.changedCount ? ` (${inline.changedCount})` : ''}</button>
+                <button type="button" className="btn ghost" disabled={inline.loading} onClick={inline.cancel}>Cancel Editing</button>
+              </>}
+            {(user?.role === "MASTER" || (user?.permissions || []).includes("*") || (user?.permissions || []).includes("dms.finance_reports.bank_statement.delete")) && <button
               type="button"
               className="btn ghost danger transactionBulkDeleteIcon"
               disabled={!selected.length || busy}
@@ -816,53 +897,47 @@ export default function BankTransactionPage({ statementPage = false }) {
               title={`Bulk delete selected (${selected.length})`}
             >
               <Trash2 size={16} />
-            </button>
+            </button>}
           </div>
-          <div className="cashbookBalanceStrip">
-            <span>
-              Bank Opening Balance{" "}
-              <strong>{`${money(Math.abs(bankOpening))} ${bankOpening < 0 ? "Cr" : "Dr"}`}</strong>
-            </span>
-            <span>
-              Account <strong>{activeBank?.accountNumber || "—"}</strong>
-            </span>
+          <small className="bookInlineHelp">{superadmin?'Superadmin: click any column headings or a row Edit icon, edit in the table, then Save All Changes. Corrections are balanced and audited; original imported and statutory records remain preserved.':'Select column headings to edit permitted DMS vouchers. Calculated Running Balance is read-only.'}</small>
+          <div className="cashbookBalanceStrip bankTotalsBar">
+            <span>Bank Opening <strong>{`${money(Math.abs(bankOpening))} ${bankOpening < 0 ? "Cr" : "Dr"}`}</strong></span>
+            <span>Debit Total <strong>{money(totals.debit)}</strong></span>
+            <span>Credit Total <strong>{money(totals.credit)}</strong></span>
+            <span>Account <strong>{activeBank?.accountNumber || "—"}</strong></span>
+            {totals.possiblyTruncated && <small title="Too many rows for the existing bank list limit. Narrow the filters for complete totals.">Totals may be limited to the first 5,000 matching entries.</small>}
+            <div className="bankColumnEditorSlot" data-bank-column-editor-anchor="true" aria-label="Bank columns editor"/>
           </div>
-          <DataTable
-            rows={rows}
-            columns={columns}
-            rowId={(r) => r._listId || r._id}
-            className="transactionCenteredTable"
-            selectable
-            selectedIds={selected}
-            onToggle={toggleSelected}
-            onToggleAll={toggleAll}
-            mobileCards
-            stickyFirstColumn
-          />
-          <div className="paginationBar">
-            <span>
-              Page {meta.page || page} of {Math.max(1, meta.pages || 1)} •{" "}
-              {meta.total || 0}
-            </span>
-            <div>
-              <button
-                className="btn ghost"
-                disabled={(meta.page || page) <= 1}
-                onClick={() => load((meta.page || page) - 1)}
-              >
-                <ChevronLeft size={15} />
-                Previous
-              </button>
-              <button
-                className="btn ghost"
-                disabled={(meta.page || page) >= (meta.pages || 1)}
-                onClick={() => load((meta.page || page) + 1)}
-              >
-                Next
-                <ChevronRight size={15} />
-              </button>
-            </div>
-          </div>
+          {monthSummaries.length ? <BookMonthAccordion
+            months={monthSummaries}
+            openMonth={openMonth}
+            onToggle={month => {inline.cancel();setOpenMonth(month);}}
+            loading={detailBusy}
+            balanceFormat={bankBalance}
+            renderDetail={() => <>
+              <DataTable
+                rows={rows}
+                columns={columns}
+                empty="No matching transactions in this month"
+                rowId={(r) => r._listId || r._id}
+                className="transactionCenteredTable"
+                selectable
+                selectedIds={selected}
+                onToggle={toggleSelected}
+                onToggleAll={toggleAll}
+                mobileCards
+                stickyFirstColumn
+              />
+              <div className="bookMonthPager">
+                <span>{meta.total || 0} matching transactions · Page {meta.page || page} of {Math.max(1,meta.pages||1)}</span>
+                <div>
+                  <button type="button" className="btn ghost" disabled={detailBusy || (meta.page||page)<=1} onClick={()=>load((meta.page||page)-1)}><ChevronLeft size={15}/>Previous</button>
+                  <button type="button" className="btn ghost" disabled={detailBusy || (meta.page||page)>=(meta.pages||1)} onClick={()=>load((meta.page||page)+1)}>Next<ChevronRight size={15}/></button>
+                </div>
+              </div>
+            </>}
+          /> : <div className="bookMonthEmpty">{summaryBusy?"Loading financial-year months…": bankFilter?"No monthly summary available.":"Select a bank account."}</div>}
+          <div className="bookMonthPager"><span>Showing April–March · Click a month to see its receipts and payments. Search/type filters apply inside expanded months.</span></div>
         </section>
       )}
 
@@ -1027,6 +1102,7 @@ export default function BankTransactionPage({ statementPage = false }) {
                 </div>
                 <datalist id="finance-party-options">
                   <option value="Suspense Account" />
+                  <option value="Company Cash-in-Hand (Contra)" />
                   {parties.map((p) => (
                     <option key={partyRef(p)} value={financePartyLabel(p)} />
                   ))}

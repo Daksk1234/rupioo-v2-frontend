@@ -1,5 +1,5 @@
 import React from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useParams } from "react-router-dom";
 import LoginPage from "./pages/LoginPage.jsx";
 import ForgotPasswordPage from "./pages/ForgotPasswordPage.jsx";
 import ResetPasswordPage from "./pages/ResetPasswordPage.jsx";
@@ -8,18 +8,24 @@ import VendorPortalPage from "./pages/VendorPortalPage.jsx";
 import AppShell from "./components/AppShell.jsx";
 import ModulePage from "./pages/ModulePage.jsx";
 import TransactionEntryPage from "./pages/TransactionEntryDialog.jsx";
+import ContraEntryPage from "./pages/ContraEntryPage.jsx";
+import VoucherEditPage from "./pages/VoucherEditPage.jsx";
 import BankTransactionPage from "./pages/BankTransactionPage.jsx";
 import NoAccessPage from "./pages/NoAccessPage.jsx";
 import SuperadminProfilePage from "./pages/SuperadminProfilePage.jsx";
 import StorageSettings from "./pages/StorageSettings.jsx";
 import { allPages } from "./config/modules.js";
 import { getUser, token } from "./lib/api.js";
+import { mayEditPostedVoucher } from "./lib/voucherEditPermissions.js";
+import ChequeControlAccessNotice from "./pages/ChequeControlAccessNotice.jsx";
+import { CHEQUE_CONTROL_PATH, canDiscoverChequeControl, hasChequeControlView } from "./lib/chequeControlNavigation.js";
 
 
 const SALES_WITH_PRODUCT_PATH = "/dms/list-of-sales-with-product";
 const SALES_INVOICE_PATH = "/dms/sales-invoices";
 
 function canViewPage(user, path) {
+  if (path === CHEQUE_CONTROL_PATH) return canDiscoverChequeControl(user);
   if (user?.pageAccess?.[path]?.view === true) return true;
   if (path === "/dms/cashbook") return ["/dms/cashier", "/dms/receipts", "/dms/payments"].some(p => user?.pageAccess?.[p]?.view === true);
   if (path === "/dms/proposed-balance-sheet") return user?.pageAccess?.["/dms/balance-sheet"]?.view === true;
@@ -57,6 +63,11 @@ function Protected({ page }) {
     return <Navigate to="/no-access" replace />;
   }
 
+  // Discoverability never bypasses the standalone Cheque Control permission.
+  if (page.path === CHEQUE_CONTROL_PATH && !hasChequeControlView(user)) {
+    return <AppShell appKey={page.app}><ChequeControlAccessNotice /></AppShell>;
+  }
+
   return (
     <AppShell appKey={page.app}>
       <ModulePage page={page} />
@@ -71,6 +82,25 @@ function TransactionSubpageProtected({channel,mode}) {
   const rights=user?.pageAccess?.[parent];
   if(!canViewPage(user,parent)||rights?.create===false)return <Navigate to="/no-access" replace/>;
   return <AppShell appKey="dms"><TransactionEntryPage channel={channel} initialTab={mode}/></AppShell>;
+}
+function VoucherEditProtected(){
+  const {kind} = useParams();
+  if(!token())return <Navigate to="/login" replace/>;
+  const user=getUser();
+  if(user?.role==="MASTER")return <Navigate to="/master/dashboard" replace/>;
+  // Require the dedicated Edit Posted Voucher screen AND a relevant Edit right;
+  // no fallback to a different page's View permission.
+  if(!mayEditPostedVoucher(user,kind))return <Navigate to="/no-access" replace/>;
+  return <AppShell appKey="dms"><VoucherEditPage/></AppShell>;
+}
+function ContraProtected() {
+  if (!token()) return <Navigate to="/login" replace/>;
+  const user=getUser();
+  if (user?.role==="MASTER") return <Navigate to="/master/dashboard" replace/>;
+  if (!canViewPage(user,"/dms/banking") || !canViewPage(user,"/dms/cashbook") ||
+      user?.pageAccess?.["/dms/banking"]?.create===false || user?.pageAccess?.["/dms/cashbook"]?.create===false)
+    return <Navigate to="/no-access" replace/>;
+  return <AppShell appKey="dms"><ContraEntryPage/></AppShell>;
 }
 function BankStatementUploadProtected(){
   if(!token())return <Navigate to="/login" replace/>;
@@ -131,6 +161,8 @@ export default function App() {
         element={<Navigate to={token() ? homePath() : "/login"} replace />}
       />
 
+      <Route path="/dms/transactions/contra" element={<ContraProtected/>}/>
+      <Route path="/dms/transactions/edit/:kind/:id" element={<VoucherEditProtected/>}/>
       <Route path="/dms/banking/add" element={<TransactionSubpageProtected channel="bank" mode="single"/>}/>
       <Route path="/dms/cashbook/add" element={<TransactionSubpageProtected channel="cash" mode="single"/>}/>
       <Route path="/dms/cashbook/bulk" element={<TransactionSubpageProtected channel="cash" mode="bulk"/>}/>

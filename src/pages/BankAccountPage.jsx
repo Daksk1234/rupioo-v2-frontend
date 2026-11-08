@@ -32,7 +32,17 @@ export default function BankAccountPage() {
   const access = accessForPath("/dms/bank-accounts");
   const session = getUser();
   const [selectedFy, setSelectedFy] = useState(currentFinancialYear());
-  const years = financialYearOptions(session, { count: 10, extra: [selectedFy] });
+  const [discoveredYears, setDiscoveredYears] = useState([]);
+  // Make historical FY openings available even if that year was not selected
+  // when the company account was originally created.
+  useEffect(() => {
+    let active = true;
+    api("/profile").then(result => {
+      if (active) setDiscoveredYears(result?.financialYearDiscovery?.availableFinancialYears || result?.company?.financialYears || []);
+    }).catch(() => {}); // The existing FY selector remains usable if Profile is unavailable.
+    return () => { active = false; };
+  }, []);
+  const years = financialYearOptions(session, { count: 10, extra: [selectedFy, ...discoveredYears] });
 
   const [rows, setRows] = useState([]), [meta, setMeta] = useState({ page: 1, pages: 1, total: 0 });
   const [q, setQ] = useState(""), [status, setStatus] = useState("ACTIVE"), [page, setPage] = useState(1);
@@ -160,7 +170,7 @@ export default function BankAccountPage() {
 
 
   const primary = useMemo(() => rows.find((row) => row.isPrimary && row.status === "ACTIVE"), [rows]);
-  const fyOpeningTotal = rows.reduce((sum,row)=>sum + (row.fyOpeningBalanceType === "CR" ? -Number(row.fyOpeningBalance || 0) : Number(row.fyOpeningBalance || 0)),0);
+  const fyOpeningTotal = rows.reduce((sum,row)=>sum + (row.fyOpeningBalanceType === "DR" ? -Number(row.fyOpeningBalance || 0) : Number(row.fyOpeningBalance || 0)),0);
 
   return <>
     <PageHeader title="Bank Accounts" description="Bank master with IFSC lookup and separate opening balance for every financial year." onAdd={() => open(null)} addLabel="Add Bank Account" />
@@ -170,7 +180,7 @@ export default function BankAccountPage() {
       <div className="bankSummaryIcon"><Landmark size={22}/></div>
       <div><span>Active Accounts</span><strong>{rows.filter(x => x.status === "ACTIVE").length}</strong></div>
       <div><span>Primary Bank</span><strong>{primary ? `${primary.bankName} • ${String(primary.accountNumber || "").slice(-4)}` : "Not selected"}</strong></div>
-      <div><span>{selectedFy || "FY"} Opening Total</span><strong>{money(fyOpeningTotal)}</strong></div>
+      <div><span>{selectedFy || "FY"} Opening Total</span><strong>{money(Math.abs(fyOpeningTotal))} {fyOpeningTotal < 0 ? "Dr" : "Cr"}</strong></div>
     </section>
 
     <section className="panel">
